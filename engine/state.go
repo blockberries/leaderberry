@@ -711,6 +711,12 @@ func (cs *ConsensusState) enterPrecommitLocked(height int64, round int32) {
 			cs.lockedBlock = cs.proposalBlock
 			cs.validRound = round
 			cs.validBlock = cs.proposalBlock
+
+			// THIRTEENTH_REFACTOR: Write state to WAL when locking on a block.
+			// This ensures BFT safety is preserved after crash - the node will
+			// remember it was locked and won't vote for a different block.
+			cs.writeStateLocked()
+
 			cs.signAndSendVoteLocked(types.VoteTypePrecommit, blockHash)
 			return
 		}
@@ -1045,6 +1051,68 @@ func (cs *ConsensusState) signAndSendVoteLocked(voteType types.VoteType, blockHa
 	// M8: Broadcast vote to peers
 	if cs.onVote != nil {
 		cs.onVote(vote)
+	}
+}
+
+// writeStateLocked writes the current consensus state to WAL (caller must hold lock).
+// THIRTEENTH_REFACTOR: This is called when locking on a block to ensure BFT safety
+// is preserved after crash recovery. The node will remember it was locked.
+func (cs *ConsensusState) writeStateLocked() {
+	if cs.wal == nil {
+		return
+	}
+
+	// Build state data with locked/valid information
+	state := &gen.ConsensusStateData{
+		Height: cs.height,
+		Round:  cs.round,
+		Step:   stepToGenerated(cs.step),
+	}
+
+	// Add locked state
+	if cs.lockedBlock != nil {
+		state.LockedRound = cs.lockedRound
+		lockedHash := types.BlockHash(cs.lockedBlock)
+		state.LockedBlockHash = &lockedHash
+	}
+
+	// Add valid state
+	if cs.validBlock != nil {
+		state.ValidRound = cs.validRound
+		validHash := types.BlockHash(cs.validBlock)
+		state.ValidBlockHash = &validHash
+	}
+
+	msg, err := wal.NewStateMessage(state)
+	if err != nil {
+		panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to create state WAL message: %v", err))
+	}
+	if err := cs.wal.WriteSync(msg); err != nil {
+		panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to write state to WAL: %v", err))
+	}
+}
+
+// stepToGenerated converts RoundStep to the generated enum type
+func stepToGenerated(step RoundStep) gen.RoundStepType {
+	switch step {
+	case RoundStepNewHeight:
+		return gen.RoundStepTypeRoundStepNewHeight
+	case RoundStepNewRound:
+		return gen.RoundStepTypeRoundStepNewRound
+	case RoundStepPropose:
+		return gen.RoundStepTypeRoundStepPropose
+	case RoundStepPrevote:
+		return gen.RoundStepTypeRoundStepPrevote
+	case RoundStepPrevoteWait:
+		return gen.RoundStepTypeRoundStepPrevoteWait
+	case RoundStepPrecommit:
+		return gen.RoundStepTypeRoundStepPrecommit
+	case RoundStepPrecommitWait:
+		return gen.RoundStepTypeRoundStepPrecommitWait
+	case RoundStepCommit:
+		return gen.RoundStepTypeRoundStepCommit
+	default:
+		return gen.RoundStepTypeRoundStepNewHeight
 	}
 }
 

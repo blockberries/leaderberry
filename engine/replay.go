@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 
+	"github.com/blockberries/leaderberry/types"
 	"github.com/blockberries/leaderberry/wal"
 	gen "github.com/blockberries/leaderberry/types/generated"
 )
@@ -34,6 +35,11 @@ type WALReplayResult struct {
 	Votes []*gen.Vote
 	// Whether we found an EndHeight message
 	FoundEndHeight bool
+	// THIRTEENTH_REFACTOR: Locked/valid state for BFT safety restoration
+	LockedRound     int32
+	LockedBlockHash *types.Hash
+	ValidRound      int32
+	ValidBlockHash  *types.Hash
 }
 
 // ReplayWAL replays the WAL from the given height to recover consensus state
@@ -149,6 +155,7 @@ func (cs *ConsensusState) replayVote(msg *wal.Message, result *WALReplayResult) 
 }
 
 // replayState replays a consensus state message
+// THIRTEENTH_REFACTOR: Now extracts locked/valid state for BFT safety restoration.
 func (cs *ConsensusState) replayState(msg *wal.Message, result *WALReplayResult) error {
 	state, err := wal.DecodeState(msg.Data)
 	if err != nil {
@@ -159,10 +166,19 @@ func (cs *ConsensusState) replayState(msg *wal.Message, result *WALReplayResult)
 	result.Round = state.Round
 	result.Step = state.Step
 
+	// THIRTEENTH_REFACTOR: Extract locked/valid state for BFT safety.
+	// If a node crashes while locked on a block, it must remember the lock
+	// after recovery to avoid voting for a different block.
+	result.LockedRound = state.LockedRound
+	result.LockedBlockHash = types.CopyHash(state.LockedBlockHash)
+	result.ValidRound = state.ValidRound
+	result.ValidBlockHash = types.CopyHash(state.ValidBlockHash)
+
 	return nil
 }
 
 // ReplayCatchup replays the WAL and applies the recovered state
+// THIRTEENTH_REFACTOR: Now restores locked/valid state for BFT safety.
 func (cs *ConsensusState) ReplayCatchup(targetHeight int64) error {
 	result, err := cs.ReplayWAL(targetHeight)
 	if err != nil {
@@ -182,9 +198,41 @@ func (cs *ConsensusState) ReplayCatchup(targetHeight int64) error {
 	cs.round = result.Round
 	cs.step = result.Step
 
+	// THIRTEENTH_REFACTOR: Restore locked/valid state for BFT safety.
+	// If we were locked on a block before crash, we must remember the lock
+	// to avoid voting for a different block (which would violate safety).
+	// Note: We restore the round and hash, but the actual block pointer
+	// remains nil until we receive the block again via BlockSync or proposal.
+	// This is safe because:
+	// 1. The round prevents us from locking on a different block at the same round
+	// 2. If we need to vote, we'll vote nil (safe) until we get the block
+	// 3. Once we receive the matching block, lockedBlock will be set
+	cs.lockedRound = result.LockedRound
+	cs.validRound = result.ValidRound
+	// Note: lockedBlock and validBlock remain nil - they'll be restored when
+	// we receive a proposal with matching hash. The important part is that
+	// lockedRound is restored so we don't vote for different blocks.
+	if result.LockedBlockHash != nil {
+		log.Printf("[INFO] consensus: restored locked state from WAL - round=%d hash=%x",
+			result.LockedRound, result.LockedBlockHash.Data[:8])
+	}
+	if result.ValidBlockHash != nil {
+		log.Printf("[INFO] consensus: restored valid state from WAL - round=%d hash=%x",
+			result.ValidRound, result.ValidBlockHash.Data[:8])
+	}
+
 	// If we have a proposal, set it
 	if result.Proposal != nil {
 		cs.proposal = result.Proposal
+
+		// THIRTEENTH_REFACTOR: If proposal matches locked/valid hash, restore block pointers
+		proposalHash := types.BlockHash(&result.Proposal.Block)
+		if result.LockedBlockHash != nil && types.HashEqual(proposalHash, *result.LockedBlockHash) {
+			cs.lockedBlock = types.CopyBlock(&result.Proposal.Block)
+		}
+		if result.ValidBlockHash != nil && types.HashEqual(proposalHash, *result.ValidBlockHash) {
+			cs.validBlock = types.CopyBlock(&result.Proposal.Block)
+		}
 	}
 
 	// Add replayed votes to vote sets

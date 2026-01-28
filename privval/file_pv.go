@@ -579,7 +579,12 @@ func (pv *FilePV) isSameProposal(proposal *gen.Proposal) bool {
 
 // isSameVote checks if the vote matches the last signed vote.
 // TWELFTH_REFACTOR: Now also checks Timestamp since VoteSignBytes includes it.
-// If Timestamp differs, the stored signature won't verify against the new vote.
+// THIRTEENTH_REFACTOR: Analysis shows current checks are sufficient because:
+// - Type is implicitly checked (same H/R/S means same step, which determines Type)
+// - Height/Round/Step are checked by CheckHRS before isSameVote is called
+// - BlockHash and Timestamp are checked below
+// - Validator/ValidatorIndex are deterministic for a given validator (can't differ)
+// The SignBytesHash field is retained for future use but not required for correctness.
 func (pv *FilePV) isSameVote(vote *gen.Vote) bool {
 	// TWELFTH_REFACTOR: Check timestamp first - if it differs, the signature
 	// won't match even if BlockHash is the same. This prevents returning
