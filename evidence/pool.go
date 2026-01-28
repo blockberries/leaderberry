@@ -160,8 +160,16 @@ func (p *Pool) CheckVote(vote *gen.Vote, valSet *types.ValidatorSet, chainID str
 	}
 
 	// H3: Enforce size limit - prune oldest entries if needed
+	// EIGHTH_REFACTOR: Check if pruning actually succeeded before adding.
+	// If all votes are in the protection window, pruning fails and we must
+	// reject the vote to prevent unbounded memory growth.
 	if len(p.seenVotes) >= MaxSeenVotes {
-		p.pruneOldestVotes(MaxSeenVotes / 10) // Remove 10%
+		p.pruneOldestVotes(MaxSeenVotes / 10) // Try to remove 10%
+		if len(p.seenVotes) >= MaxSeenVotes {
+			// Pruning didn't help - pool is full of protected votes
+			log.Printf("[WARN] evidence: vote pool full (%d votes in protection window), dropping vote", len(p.seenVotes))
+			return nil, nil // Silently drop - not an error, just can't track
+		}
 	}
 
 	// H3: Deep copy vote before storing to prevent caller from modifying it.

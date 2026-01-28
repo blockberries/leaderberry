@@ -438,28 +438,31 @@ func (pv *FilePV) SignVote(chainID string, vote *gen.Vote) error {
 	sig := ed25519.Sign(pv.privKey, signBytes)
 	newSig := types.MustNewSignature(sig) // ed25519 output is always valid
 
-	// SEVENTH_REFACTOR: Persist state BEFORE updating in-memory state to prevent
-	// double-sign vulnerability. If we crash after signing but before persisting,
-	// we could sign a different vote at the same H/R/S after restart.
-	// By persisting first, we ensure disk state is always ahead of or equal to
-	// any signature we've created.
+	// SEVENTH_REFACTOR: Prevent double-sign vulnerability by ensuring we never
+	// return a signature until the state is durably persisted.
+	// EIGHTH_REFACTOR: Clarified comment - the actual sequence is:
+	// 1. Update in-memory state (for saveState to serialize)
+	// 2. Persist to disk atomically
+	// 3. Only then return signature to caller
+	// The key invariant is: vote.Signature is only set AFTER saveState() succeeds.
+	// If we crash before persist completes, the signature is never returned.
 	oldState := pv.lastSignState // Save for rollback if persist fails
 
-	// Prepare new state
+	// Prepare new state (needed for saveState to serialize)
 	pv.lastSignState.Height = vote.Height
 	pv.lastSignState.Round = vote.Round
 	pv.lastSignState.Step = step
 	pv.lastSignState.Signature = newSig
 	pv.lastSignState.BlockHash = vote.BlockHash
 
-	// Persist state FIRST - PANIC on failure (consensus critical)
+	// Persist state - PANIC on failure (consensus critical)
 	if err := pv.saveState(); err != nil {
 		// Rollback in-memory state before panicking
 		pv.lastSignState = oldState
 		panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to persist sign state after vote: %v", err))
 	}
 
-	// Only set vote signature AFTER successful persist
+	// Only set vote signature AFTER successful persist - this is the critical invariant
 	vote.Signature = newSig
 
 	return nil
@@ -485,11 +488,11 @@ func (pv *FilePV) SignProposal(chainID string, proposal *gen.Proposal) error {
 	sig := ed25519.Sign(pv.privKey, signBytes)
 	newSig := types.MustNewSignature(sig) // ed25519 output is always valid
 
-	// SEVENTH_REFACTOR: Persist state BEFORE updating in-memory state to prevent
-	// double-sign vulnerability. See SignVote for detailed explanation.
+	// SEVENTH_REFACTOR: Prevent double-sign vulnerability. See SignVote for details.
+	// EIGHTH_REFACTOR: Clarified - signature only returned after persist succeeds.
 	oldState := pv.lastSignState // Save for rollback if persist fails
 
-	// Prepare new state
+	// Prepare new state (needed for saveState to serialize)
 	blockHash := types.BlockHash(&proposal.Block)
 	pv.lastSignState.Height = proposal.Height
 	pv.lastSignState.Round = proposal.Round
@@ -497,14 +500,14 @@ func (pv *FilePV) SignProposal(chainID string, proposal *gen.Proposal) error {
 	pv.lastSignState.Signature = newSig
 	pv.lastSignState.BlockHash = &blockHash
 
-	// Persist state FIRST - PANIC on failure (consensus critical)
+	// Persist state - PANIC on failure (consensus critical)
 	if err := pv.saveState(); err != nil {
 		// Rollback in-memory state before panicking
 		pv.lastSignState = oldState
 		panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to persist sign state after proposal: %v", err))
 	}
 
-	// Only set proposal signature AFTER successful persist
+	// Only set proposal signature AFTER successful persist - critical invariant
 	proposal.Signature = newSig
 
 	return nil

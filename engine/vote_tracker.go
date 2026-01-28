@@ -182,13 +182,17 @@ func (vs *VoteSet) VotingPower() int64 {
 
 // GetVotes returns all votes sorted by validator index for deterministic ordering.
 // H5: Map iteration is non-deterministic; sorting ensures consistent results.
+// EIGHTH_REFACTOR: Returns deep copies to prevent callers from modifying internal state.
 func (vs *VoteSet) GetVotes() []*gen.Vote {
 	vs.mu.RLock()
 	defer vs.mu.RUnlock()
 
 	votes := make([]*gen.Vote, 0, len(vs.votes))
 	for _, v := range vs.votes {
-		votes = append(votes, v)
+		// EIGHTH_REFACTOR: Return copies instead of pointers to internal votes.
+		// This prevents callers from corrupting VoteSet state by modifying
+		// the returned votes.
+		votes = append(votes, types.CopyVote(v))
 	}
 
 	// H5: Sort by validator index for deterministic ordering

@@ -479,11 +479,14 @@ func (ps *PeerSet) CatchingUpPeers() []*PeerState {
 }
 
 // MarkPeerCatchingUp marks a peer as catching up if behind
+// EIGHTH_REFACTOR: Hold lock during entire operation to prevent TOCTOU race.
+// Previously, the lock was released between getting peer and calling SetCatchingUp,
+// allowing the peer to be removed from the map by another goroutine.
 func (ps *PeerSet) MarkPeerCatchingUp(peerID string, ourHeight int64) {
 	ps.mu.RLock()
-	peer := ps.peers[peerID]
-	ps.mu.RUnlock()
+	defer ps.mu.RUnlock()
 
+	peer := ps.peers[peerID]
 	if peer == nil {
 		return
 	}

@@ -555,9 +555,12 @@ func (cs *ConsensusState) handleProposal(proposal *gen.Proposal) {
 	// Accept proposal
 	cs.proposal = proposal
 
-	// H2: Make a copy of the block to avoid aliasing issues
-	blockCopy := proposal.Block
-	cs.proposalBlock = &blockCopy
+	// EIGHTH_REFACTOR: Deep copy the block to prevent aliasing issues.
+	// A shallow copy is insufficient because Block contains slices (Evidence,
+	// Header.BatchCertRefs) and pointers (LastCommit) that would share memory
+	// with the original proposal. If the proposal's block is modified after
+	// acceptance, it would corrupt our consensus state.
+	cs.proposalBlock = types.CopyBlock(&proposal.Block)
 
 	// Enter prevote (use locked version since we hold the lock)
 	cs.enterPrevoteLocked(cs.height, cs.round)
