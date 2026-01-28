@@ -336,7 +336,11 @@ func ValidatorSetFromData(data *ValidatorSetData) (*ValidatorSet, error) {
 	return vs, nil
 }
 
-// Hash computes a deterministic hash of the validator set
+// Hash computes a deterministic hash of the validator set.
+// SIXTH_REFACTOR: ProposerPriority is explicitly excluded from the hash because it's
+// mutable state that changes every round. Including it would cause two validator sets
+// with identical composition to produce different hashes, breaking light client
+// verification and state sync.
 func (vs *ValidatorSet) Hash() Hash {
 	// Sort validators by name for deterministic ordering
 	sorted := make([]*NamedValidator, len(vs.Validators))
@@ -345,10 +349,17 @@ func (vs *ValidatorSet) Hash() Hash {
 		return AccountNameString(sorted[i].Name) < AccountNameString(sorted[j].Name)
 	})
 
-	// Create data from sorted validators
+	// Create data from sorted validators, explicitly zeroing ProposerPriority
+	// to ensure hash is deterministic regardless of current priority state
 	validators := make([]NamedValidator, len(sorted))
 	for i, v := range sorted {
-		validators[i] = *v
+		validators[i] = NamedValidator{
+			Name:             v.Name,
+			Index:            v.Index,
+			PublicKey:        v.PublicKey,
+			VotingPower:      v.VotingPower,
+			ProposerPriority: 0, // SIXTH_REFACTOR: Exclude from hash
+		}
 	}
 
 	// Find proposer index in sorted list

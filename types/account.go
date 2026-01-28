@@ -23,6 +23,19 @@ var (
 	ErrInvalidSignature   = errors.New("invalid signature")
 )
 
+// MaxAuthWeight is the maximum total authorization weight to prevent overflow.
+// SIXTH_REFACTOR: Added to prevent uint32 overflow in weight accumulation.
+const MaxAuthWeight = uint32(1<<31 - 1) // ~2 billion, safe headroom
+
+// safeAddWeight adds weight with overflow protection.
+// Returns the sum capped at MaxAuthWeight to prevent wrap-around.
+func safeAddWeight(total, add uint32) uint32 {
+	if add > MaxAuthWeight-total {
+		return MaxAuthWeight // Cap at max to prevent overflow
+	}
+	return total + add
+}
+
 // NewAccountName creates an AccountName
 func NewAccountName(name string) AccountName {
 	return AccountName{Name: &name}
@@ -103,7 +116,8 @@ func VerifyAuthorization(
 			if bytes.Equal(sig.PublicKey.Data, kw.PublicKey.Data) {
 				// Verify signature
 				if VerifySignature(kw.PublicKey, signBytes, sig.Signature) {
-					totalWeight += kw.Weight
+					// SIXTH_REFACTOR: Use safe addition to prevent overflow
+					totalWeight = safeAddWeight(totalWeight, kw.Weight)
 				}
 				break
 			}
@@ -150,7 +164,8 @@ func VerifyAuthorization(
 
 				// If delegated account's authority is satisfied, add its weight
 				if weight >= acc.Authority.Threshold {
-					totalWeight += aw.Weight
+					// SIXTH_REFACTOR: Use safe addition to prevent overflow
+					totalWeight = safeAddWeight(totalWeight, aw.Weight)
 				}
 				break
 			}

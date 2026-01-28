@@ -315,6 +315,7 @@ func (w *FileWAL) rotate() error {
 	info, err := newFile.Stat()
 	if err != nil {
 		newFile.Close()
+		os.Remove(newPath) // SIXTH_REFACTOR: Clean up orphaned file on error
 		return fmt.Errorf("failed to stat new WAL segment: %w", err)
 	}
 

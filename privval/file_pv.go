@@ -357,16 +357,19 @@ func (pv *FilePV) saveState() error {
 	// Sync temp file to ensure data is on disk
 	tmpFile, err := os.Open(tmpPath)
 	if err != nil {
+		os.Remove(tmpPath) // SIXTH_REFACTOR: Clean up temp file on error
 		return fmt.Errorf("failed to open temp file for sync: %w", err)
 	}
 	if err := tmpFile.Sync(); err != nil {
 		tmpFile.Close()
+		os.Remove(tmpPath) // SIXTH_REFACTOR: Clean up temp file on error
 		return fmt.Errorf("failed to sync temp file: %w", err)
 	}
 	tmpFile.Close()
 
 	// Atomic rename
 	if err := os.Rename(tmpPath, pv.stateFilePath); err != nil {
+		os.Remove(tmpPath) // SIXTH_REFACTOR: Clean up temp file on error
 		return fmt.Errorf("failed to rename state file: %w", err)
 	}
 

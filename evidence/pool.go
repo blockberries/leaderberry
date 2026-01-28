@@ -117,9 +117,14 @@ func (p *Pool) CheckVote(vote *gen.Vote, valSet *types.ValidatorSet) (*gen.Dupli
 		// Check if this is equivocation (different block hash)
 		if !votesForSameBlock(existing, vote) {
 			// Found equivocation
+			// SIXTH_REFACTOR: Deep copy both votes to ensure evidence is immutable.
+			// VoteA (existing) was already deep-copied when stored.
+			// VoteB (vote) must also be deep-copied to prevent caller modification.
+			voteACopy := types.CopyVote(existing)
+			voteBCopy := types.CopyVote(vote)
 			ev := &gen.DuplicateVoteEvidence{
-				VoteA:            *existing,
-				VoteB:            *vote,
+				VoteA:            *voteACopy,
+				VoteB:            *voteBCopy,
 				TotalVotingPower: valSet.TotalPower,
 				Timestamp:        time.Now().UnixNano(),
 			}
