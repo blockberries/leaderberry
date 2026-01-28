@@ -372,11 +372,16 @@ func (bs *BlockSyncer) ReceiveBlock(block *gen.Block, commit *gen.Commit) error 
 
 		// Notify callback
 		// H5: Track callback goroutines with WaitGroup
+		// SEVENTH_REFACTOR: Deep copy block and commit before passing to async callback.
+		// This prevents race conditions where the caller might modify the originals
+		// after ReceiveBlock returns but before the callback executes.
 		if bs.onBlockCommitted != nil {
+			blockCopy := types.CopyBlock(block)
+			commitCopy := types.CopyCommit(commit)
 			bs.wg.Add(1)
 			go func() {
 				defer bs.wg.Done()
-				bs.onBlockCommitted(block, commit)
+				bs.onBlockCommitted(blockCopy, commitCopy)
 			}()
 		}
 

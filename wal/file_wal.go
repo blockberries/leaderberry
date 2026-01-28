@@ -24,6 +24,11 @@ const (
 	// L2: Default pool buffer size for decoder.
 	// Set to 64KB to match typical proposal/block sizes and reduce reallocations.
 	defaultPoolBufSize = 65536
+
+	// SEVENTH_REFACTOR: Maximum entries in height index to prevent unbounded memory growth.
+	// With 1 block per second, this covers ~27 hours of heights.
+	// When exceeded, oldest entries are pruned.
+	maxHeightIndexSize = 100000
 )
 
 // L2: Byte pool to reduce GC pressure in WAL decoder
@@ -290,9 +295,36 @@ func (w *FileWAL) Write(msg *Message) error {
 	// Update height index for EndHeight messages
 	if msg.Type == MsgTypeEndHeight {
 		w.heightIndex[msg.Height] = w.segmentIndex
+		// SEVENTH_REFACTOR: Prune old entries to prevent unbounded memory growth
+		w.pruneHeightIndex()
 	}
 
 	return nil
+}
+
+// pruneHeightIndex removes oldest height index entries when size exceeds limit.
+// SEVENTH_REFACTOR: Prevents unbounded memory growth in long-running nodes.
+// Caller must hold w.mu.
+func (w *FileWAL) pruneHeightIndex() {
+	if len(w.heightIndex) <= maxHeightIndexSize {
+		return
+	}
+
+	// Find the minimum height to determine what's "old"
+	// Keep the most recent maxHeightIndexSize entries
+	heights := make([]int64, 0, len(w.heightIndex))
+	for h := range w.heightIndex {
+		heights = append(heights, h)
+	}
+	sort.Slice(heights, func(i, j int) bool {
+		return heights[i] < heights[j]
+	})
+
+	// Remove oldest entries (keep the highest maxHeightIndexSize heights)
+	toRemove := len(heights) - maxHeightIndexSize
+	for i := 0; i < toRemove; i++ {
+		delete(w.heightIndex, heights[i])
+	}
 }
 
 // rotate closes the current segment and opens a new one
@@ -363,6 +395,8 @@ func (w *FileWAL) WriteSync(msg *Message) error {
 	// Update height index for EndHeight messages
 	if msg.Type == MsgTypeEndHeight {
 		w.heightIndex[msg.Height] = w.segmentIndex
+		// SEVENTH_REFACTOR: Prune old entries to prevent unbounded memory growth
+		w.pruneHeightIndex()
 	}
 
 	return w.flushAndSync()

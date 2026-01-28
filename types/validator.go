@@ -79,11 +79,21 @@ func NewValidatorSet(validators []*NamedValidator) (*ValidatorSet, error) {
 			return nil, fmt.Errorf("%w: exceeds %d", ErrTotalPowerOverflow, MaxTotalVotingPower)
 		}
 
-		// Create copy with correct index
+		// SEVENTH_REFACTOR: Create deep copy to prevent aliasing issues.
+		// AccountName contains *string and PublicKey contains []byte, both of which
+		// would share memory with the input if we just did a struct copy.
+		nameCopy := CopyAccountName(v.Name)
+
+		var pubKeyCopy PublicKey
+		if len(v.PublicKey.Data) > 0 {
+			pubKeyCopy.Data = make([]byte, len(v.PublicKey.Data))
+			copy(pubKeyCopy.Data, v.PublicKey.Data)
+		}
+
 		val := &NamedValidator{
-			Name:             v.Name,
+			Name:             nameCopy,
 			Index:            uint16(i),
-			PublicKey:        v.PublicKey,
+			PublicKey:        pubKeyCopy,
 			VotingPower:      v.VotingPower,
 			ProposerPriority: v.ProposerPriority,
 		}

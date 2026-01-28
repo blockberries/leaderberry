@@ -107,9 +107,28 @@ func (p *Pool) Update(height int64, blockTime time.Time) {
 
 // CheckVote checks a vote for equivocation and returns evidence if found.
 // H3: Enforces MaxSeenVotes limit to prevent unbounded memory growth.
-func (p *Pool) CheckVote(vote *gen.Vote, valSet *types.ValidatorSet) (*gen.DuplicateVoteEvidence, error) {
+// SEVENTH_REFACTOR: Now verifies vote signature before storing to prevent
+// fake votes from being stored and triggering false equivocation detection.
+// Pass chainID for signature verification. If empty, verification is skipped
+// (useful for testing, but should always be provided in production).
+func (p *Pool) CheckVote(vote *gen.Vote, valSet *types.ValidatorSet, chainID string) (*gen.DuplicateVoteEvidence, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	// SEVENTH_REFACTOR: Verify vote signature before processing
+	// This prevents attackers from injecting fake votes to fill memory or
+	// trigger false equivocation detection.
+	val := valSet.GetByName(types.AccountNameString(vote.Validator))
+	if val == nil {
+		return nil, ErrInvalidValidator
+	}
+
+	// Verify signature if chainID is provided (production use)
+	if chainID != "" {
+		if err := types.VerifyVoteSignature(chainID, vote, val.PublicKey); err != nil {
+			return nil, fmt.Errorf("invalid vote signature: %w", err)
+		}
+	}
 
 	key := voteKey(vote)
 

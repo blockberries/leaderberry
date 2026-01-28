@@ -58,7 +58,7 @@ func TestPoolCheckVoteEquivocation(t *testing.T) {
 	}
 
 	// Check first vote - should not be equivocation
-	ev, err := pool.CheckVote(vote1, valSet)
+	ev, err := pool.CheckVote(vote1, valSet, "")
 	if err != nil {
 		t.Fatalf("CheckVote failed: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestPoolCheckVoteEquivocation(t *testing.T) {
 	}
 
 	// Same vote again - not equivocation
-	ev, err = pool.CheckVote(vote1, valSet)
+	ev, err = pool.CheckVote(vote1, valSet, "")
 	if err != nil {
 		t.Fatalf("CheckVote failed: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestPoolCheckVoteEquivocation(t *testing.T) {
 		ValidatorIndex: 0,
 	}
 
-	ev, err = pool.CheckVote(vote2, valSet)
+	ev, err = pool.CheckVote(vote2, valSet, "")
 	if err != nil {
 		t.Fatalf("CheckVote failed: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestPoolCheckVoteSameBlock(t *testing.T) {
 		ValidatorIndex: 0,
 	}
 
-	pool.CheckVote(vote1, valSet)
+	pool.CheckVote(vote1, valSet, "")
 
 	// Same block hash - not equivocation
 	vote2 := &gen.Vote{
@@ -135,7 +135,7 @@ func TestPoolCheckVoteSameBlock(t *testing.T) {
 		ValidatorIndex: 0,
 	}
 
-	ev, err := pool.CheckVote(vote2, valSet)
+	ev, err := pool.CheckVote(vote2, valSet, "")
 	if err != nil {
 		t.Fatalf("CheckVote failed: %v", err)
 	}

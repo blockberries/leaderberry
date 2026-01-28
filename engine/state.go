@@ -841,8 +841,9 @@ func (cs *ConsensusState) handleVote(vote *gen.Vote) {
 	defer cs.mu.Unlock()
 
 	// M3: Check for equivocation BEFORE adding
+	// SEVENTH_REFACTOR: Pass chainID for signature verification
 	if cs.evidencePool != nil {
-		dve, err := cs.evidencePool.CheckVote(vote, cs.validatorSet)
+		dve, err := cs.evidencePool.CheckVote(vote, cs.validatorSet, cs.config.ChainID)
 		if err != nil {
 			log.Printf("[DEBUG] consensus: evidence check error: %v", err)
 		}

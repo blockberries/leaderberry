@@ -286,7 +286,7 @@ func TestEvidenceIntegration(t *testing.T) {
 		Validator:      types.NewAccountName("alice"),
 		ValidatorIndex: 0,
 	}
-	pool.CheckVote(vote1, valSet)
+	pool.CheckVote(vote1, valSet, "")
 
 	// Conflicting vote - equivocation
 	vote2 := &gen.Vote{
@@ -299,7 +299,7 @@ func TestEvidenceIntegration(t *testing.T) {
 		ValidatorIndex: 0,
 	}
 
-	ev, err := pool.CheckVote(vote2, valSet)
+	ev, err := pool.CheckVote(vote2, valSet, "")
 	if err != nil {
 		t.Fatalf("CheckVote failed: %v", err)
 	}
