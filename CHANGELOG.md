@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-01-28 - Second Refactor Phase 5
+
+Remaining missing functionality items for production readiness.
+
+### Missing Functionality Fixes (MF1, MF2, MF5)
+
+#### MF5: Peer Management for Consensus
+- Added `PeerState` to track individual peer consensus state
+- Added `PeerRoundState` with height, round, step, and vote tracking
+- Added `VoteBitmap` for efficient vote possession tracking
+- Added `PeerSet` for managing multiple peers
+- Methods for finding peers needing votes/proposals
+- Support for tracking catching-up peers
+
+#### MF1: Block Parts / Chunking
+- Added `BlockPart` structure for individual block parts
+- Added `PartSet` for collecting and reassembling parts
+- Added `BlockPartSetHeader` for describing part sets
+- Merkle tree proof verification for parts
+- 64KB default part size, supports blocks up to 64MB
+- `BlockPartsFromBlock` and `BlockFromParts` conversion functions
+- `PartSetBitmap` for tracking which parts peers have
+
+#### MF2: Catch-up / Fast Sync
+- Added `BlockSyncer` for block synchronization
+- Block sync states: Idle, Syncing, CaughtUp
+- Automatic target height tracking from peers
+- Pending request management with timeouts
+- Commit certificate verification during sync (uses MF4)
+- Callbacks for block committed and caught up events
+- `BlockProvider` and `BlockStore` interfaces
+
+### Added
+- `engine/peer_state.go` - Peer state tracking
+- `engine/peer_state_test.go` - Peer state tests
+- `engine/blocksync.go` - Block synchronization
+- `engine/blocksync_test.go` - Block sync tests
+- `types/block_parts.go` - Block part system
+- `types/block_parts_test.go` - Block parts tests
+
 ## [0.6.0] - 2026-01-28 - Second Refactor Phase 4
 
 Final low severity and missing functionality fixes from comprehensive code review.
