@@ -98,14 +98,24 @@ type PrivValidator interface {
 // WAL is an alias for the wal package's WAL interface
 type WAL = wal.WAL
 
+// ValidatorUpdate represents a change to a validator's voting power.
+// MF3: Used to communicate validator set changes from block execution.
+type ValidatorUpdate struct {
+	Name        types.AccountName
+	PublicKey   types.PublicKey
+	VotingPower int64 // 0 means remove validator
+}
+
 // BlockExecutor interface for executing blocks
 type BlockExecutor interface {
 	// CreateProposalBlock creates a new block proposal
 	CreateProposalBlock(height int64, lastCommit *gen.Commit, proposer types.AccountName) (*gen.Block, error)
 	// ValidateBlock validates a proposed block
 	ValidateBlock(block *gen.Block) error
-	// ApplyBlock applies a committed block
-	ApplyBlock(block *gen.Block, commit *gen.Commit) error
+	// ApplyBlock applies a committed block and returns validator updates.
+	// MF3: Returns validator updates to be applied to the validator set.
+	// An empty slice means no changes. Validators with VotingPower=0 are removed.
+	ApplyBlock(block *gen.Block, commit *gen.Commit) ([]ValidatorUpdate, error)
 }
 
 // NewConsensusState creates a new ConsensusState
@@ -147,6 +157,73 @@ func (cs *ConsensusState) SetEvidencePool(pool *evidence.Pool) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.evidencePool = pool
+}
+
+// applyValidatorUpdates applies validator updates to the current set and returns a new set.
+// MF3: This method handles validator set changes from block execution:
+// - VotingPower > 0: Add or update validator
+// - VotingPower == 0: Remove validator
+// The returned set has proposer priorities incremented by 1.
+func (cs *ConsensusState) applyValidatorUpdates(updates []ValidatorUpdate) (*types.ValidatorSet, error) {
+	// Build a map of current validators by name for quick lookup
+	currentVals := make(map[string]*types.NamedValidator)
+	for _, v := range cs.validatorSet.Validators {
+		name := types.AccountNameString(v.Name)
+		currentVals[name] = v
+	}
+
+	// Apply updates
+	for _, update := range updates {
+		name := types.AccountNameString(update.Name)
+
+		if update.VotingPower == 0 {
+			// Remove validator
+			delete(currentVals, name)
+		} else {
+			// Add or update validator
+			if existing, ok := currentVals[name]; ok {
+				// Update existing - preserve priority, update power and key
+				currentVals[name] = &types.NamedValidator{
+					Name:             existing.Name,
+					Index:            existing.Index, // Will be reassigned
+					PublicKey:        update.PublicKey,
+					VotingPower:      update.VotingPower,
+					ProposerPriority: existing.ProposerPriority,
+				}
+			} else {
+				// Add new validator with zero priority (will be adjusted)
+				currentVals[name] = &types.NamedValidator{
+					Name:             update.Name,
+					Index:            0, // Will be assigned by NewValidatorSet
+					PublicKey:        update.PublicKey,
+					VotingPower:      update.VotingPower,
+					ProposerPriority: 0,
+				}
+			}
+		}
+	}
+
+	// Convert map back to slice
+	newVals := make([]*types.NamedValidator, 0, len(currentVals))
+	for _, v := range currentVals {
+		newVals = append(newVals, v)
+	}
+
+	// Check we still have validators
+	if len(newVals) == 0 {
+		return nil, fmt.Errorf("validator set would be empty after updates")
+	}
+
+	// Create new validator set (this reindexes and validates)
+	newSet, err := types.NewValidatorSet(newVals)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create new validator set: %w", err)
+	}
+
+	// Increment proposer priority for the new round
+	newSet.IncrementProposerPriority(1)
+
+	return newSet, nil
 }
 
 // Start starts the consensus state machine at the given height
@@ -680,9 +757,12 @@ func (cs *ConsensusState) finalizeCommitLocked(height int64, commit *gen.Commit)
 		panic(fmt.Sprintf("CONSENSUS CRITICAL: finalizeCommit called with no block at height %d", height))
 	}
 
-	// Apply block - PANIC on failure (consensus has decided, failure is catastrophic)
+	// MF3: Apply block and get validator updates
+	var valUpdates []ValidatorUpdate
 	if cs.blockExecutor != nil {
-		if err := cs.blockExecutor.ApplyBlock(block, commit); err != nil {
+		var err error
+		valUpdates, err = cs.blockExecutor.ApplyBlock(block, commit)
+		if err != nil {
 			panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to apply committed block at height %d: %v", height, err))
 		}
 	}
@@ -707,12 +787,21 @@ func (cs *ConsensusState) finalizeCommitLocked(height int64, commit *gen.Commit)
 	cs.validBlock = nil
 	cs.lastCommit = commit
 
-	// CR4: Create new validator set with incremented priority (immutable pattern)
-	newValSet, err := cs.validatorSet.WithIncrementedPriority(1)
-	if err != nil {
-		panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to update validator set: %v", err))
+	// MF3: Apply validator updates if any
+	if len(valUpdates) > 0 {
+		newValSet, err := cs.applyValidatorUpdates(valUpdates)
+		if err != nil {
+			panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to apply validator updates at height %d: %v", height, err))
+		}
+		cs.validatorSet = newValSet
+	} else {
+		// CR4: Create new validator set with incremented priority (immutable pattern)
+		newValSet, err := cs.validatorSet.WithIncrementedPriority(1)
+		if err != nil {
+			panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to update validator set: %v", err))
+		}
+		cs.validatorSet = newValSet
 	}
-	cs.validatorSet = newValSet
 
 	// Reset votes
 	cs.votes.Reset(cs.height, cs.validatorSet)

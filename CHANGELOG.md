@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-01-28 - Second Refactor Phase 4
+
+Final low severity and missing functionality fixes from comprehensive code review.
+
+### Low Severity Fixes (L2)
+
+#### L2: GC Pressure in WAL Decoder
+- Added `sync.Pool` for decoder byte buffers
+- Reuses buffers for messages up to 64KB (default pool size)
+- Reduces GC pressure during high-throughput WAL replay
+
+### Missing Functionality Fixes (MF3, MF4)
+
+#### MF3: Validator Set Updates from Blocks
+- Updated `BlockExecutor.ApplyBlock` interface to return `[]ValidatorUpdate`
+- Added `ValidatorUpdate` type for communicating validator changes
+- Added `applyValidatorUpdates` method in ConsensusState
+- Supports adding, updating, and removing validators based on block execution
+- Validator removal by setting VotingPower to 0
+
+#### MF4: Commit Certificate Verification
+- Added `VerifyCommit` function for full commit verification
+  - Verifies all signatures against validator public keys
+  - Checks for duplicate validator signatures
+  - Validates 2/3+ voting power for the block
+- Added `VerifyCommitLight` for lighter verification (power only, no signature re-verification)
+- Used for light client verification and historical block validation
+
+### Added
+- `ValidatorUpdate` type in engine/state.go
+- `applyValidatorUpdates` method for validator set changes
+- `VerifyCommit` and `VerifyCommitLight` functions in types/vote.go
+- `decoderPool` sync.Pool in wal/file_wal.go
+
 ## [0.5.0] - 2026-01-28 - Second Refactor Phase 3
 
 Remaining medium and low severity fixes from comprehensive code review.

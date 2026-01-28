@@ -20,7 +20,19 @@ const (
 	maxMsgSize        = 10 * 1024 * 1024 // 10MB max message size
 	defaultBufSize    = 64 * 1024        // 64KB buffer
 	defaultMaxSegSize = 64 * 1024 * 1024 // 64MB default segment size
+
+	// L2: Default pool buffer size for decoder
+	defaultPoolBufSize = 4096
 )
+
+// L2: Byte pool to reduce GC pressure in WAL decoder
+// Buffers are reused for reading message data, then copied for the final Message.
+var decoderPool = sync.Pool{
+	New: func() interface{} {
+		buf := make([]byte, 0, defaultPoolBufSize)
+		return &buf
+	},
+}
 
 // FileWAL is a file-based WAL implementation
 type FileWAL struct {
@@ -600,21 +612,47 @@ func (d *decoder) Decode() (*Message, error) {
 		return nil, ErrWALCorrupted
 	}
 
-	// Read data
-	data := make([]byte, length)
-	if _, err := io.ReadFull(d.r, data); err != nil {
+	// L2: Get buffer from pool to reduce GC pressure
+	poolBufPtr := decoderPool.Get().(*[]byte)
+	poolBuf := *poolBufPtr
+
+	// Ensure buffer is large enough
+	if cap(poolBuf) < int(length) {
+		// Need a larger buffer - allocate new one
+		poolBuf = make([]byte, length)
+	} else {
+		poolBuf = poolBuf[:length]
+	}
+
+	// Read data into pooled buffer
+	if _, err := io.ReadFull(d.r, poolBuf); err != nil {
+		// Return buffer to pool before returning error
+		*poolBufPtr = poolBuf[:0]
+		decoderPool.Put(poolBufPtr)
 		return nil, err
 	}
 
 	// Read and verify CRC32 checksum
 	if _, err := io.ReadFull(d.r, d.buf[:4]); err != nil {
+		*poolBufPtr = poolBuf[:0]
+		decoderPool.Put(poolBufPtr)
 		return nil, err
 	}
 	expectedCRC := binary.BigEndian.Uint32(d.buf[:4])
-	actualCRC := crc32.ChecksumIEEE(data)
+	actualCRC := crc32.ChecksumIEEE(poolBuf)
 	if expectedCRC != actualCRC {
+		*poolBufPtr = poolBuf[:0]
+		decoderPool.Put(poolBufPtr)
 		return nil, fmt.Errorf("%w: CRC mismatch (expected %08x, got %08x)", ErrWALCorrupted, expectedCRC, actualCRC)
 	}
+
+	// Make a copy for the message (message takes ownership)
+	data := make([]byte, length)
+	copy(data, poolBuf)
+
+	// Return buffer to pool
+	*poolBufPtr = poolBuf[:0]
+	decoderPool.Put(poolBufPtr)
 
 	// Deserialize message
 	msg := &Message{}
