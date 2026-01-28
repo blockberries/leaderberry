@@ -224,6 +224,9 @@ func (bs *BlockSyncer) UpdateTargetHeight() {
 	bs.targetHeight = maxHeight
 
 	// Update state based on progress
+	// NINTH_REFACTOR: Added CaughtUp → Syncing transition. Previously, a node that
+	// caught up and then fell behind (e.g., temporary network disconnect) would
+	// never start syncing again because only Idle → Syncing was allowed.
 	if bs.currentHeight >= bs.targetHeight {
 		if bs.state == BlockSyncStateSyncing {
 			bs.state = BlockSyncStateCaughtUp
@@ -232,9 +235,13 @@ func (bs *BlockSyncer) UpdateTargetHeight() {
 				go bs.onCaughtUp()
 			}
 		}
-	} else if bs.state == BlockSyncStateIdle {
+	} else if bs.state == BlockSyncStateIdle || bs.state == BlockSyncStateCaughtUp {
+		if bs.state == BlockSyncStateCaughtUp {
+			log.Printf("[INFO] blocksync: fell behind, resuming sync from %d to %d", bs.currentHeight, bs.targetHeight)
+		} else {
+			log.Printf("[INFO] blocksync: starting sync from %d to %d", bs.currentHeight, bs.targetHeight)
+		}
 		bs.state = BlockSyncStateSyncing
-		log.Printf("[INFO] blocksync: starting sync from %d to %d", bs.currentHeight, bs.targetHeight)
 	}
 }
 

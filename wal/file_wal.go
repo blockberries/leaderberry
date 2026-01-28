@@ -834,6 +834,10 @@ func (r *multiSegmentReader) Read() (*Message, error) {
 			continue
 		}
 		if err != nil {
+			// NINTH_REFACTOR: Close reader on non-EOF error to prevent file handle leak.
+			// Previously, only EOF errors would close the reader.
+			r.reader.Close()
+			r.reader = nil
 			return nil, err
 		}
 		return msg, nil

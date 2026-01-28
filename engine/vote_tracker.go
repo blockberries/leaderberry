@@ -127,13 +127,14 @@ func (vs *VoteSet) AddVote(vote *gen.Vote) (bool, error) {
 	return true, nil
 }
 
-// TwoThirdsMajority returns the block hash with 2/3+ votes, if any
+// TwoThirdsMajority returns the block hash with 2/3+ votes, if any.
+// NINTH_REFACTOR: Returns a deep copy to prevent callers from modifying internal state.
 func (vs *VoteSet) TwoThirdsMajority() (*types.Hash, bool) {
 	vs.mu.RLock()
 	defer vs.mu.RUnlock()
 
 	if vs.maj23 != nil {
-		return vs.maj23.blockHash, true
+		return types.CopyHash(vs.maj23.blockHash), true
 	}
 	return nil, false
 }
@@ -159,11 +160,16 @@ func (vs *VoteSet) HasAll() bool {
 	return len(vs.votes) == vs.validatorSet.Size()
 }
 
-// GetVote returns the vote from a validator, if any
+// GetVote returns the vote from a validator, if any.
+// NINTH_REFACTOR: Returns a deep copy to prevent callers from modifying internal state.
 func (vs *VoteSet) GetVote(valIndex uint16) *gen.Vote {
 	vs.mu.RLock()
 	defer vs.mu.RUnlock()
-	return vs.votes[valIndex]
+	vote := vs.votes[valIndex]
+	if vote == nil {
+		return nil
+	}
+	return types.CopyVote(vote)
 }
 
 // Size returns the number of votes
@@ -284,11 +290,17 @@ func (vs *VoteSet) MakeCommit() *gen.Commit {
 			continue
 		}
 
+		// NINTH_REFACTOR: Deep copy signature and block hash to prevent
+		// the commit from being corrupted if the original votes are modified.
 		sig := gen.CommitSig{
 			ValidatorIndex: vote.ValidatorIndex,
-			Signature:      vote.Signature,
 			Timestamp:      vote.Timestamp,
-			BlockHash:      vote.BlockHash,
+			BlockHash:      types.CopyHash(vote.BlockHash),
+		}
+		// Deep copy signature data
+		if len(vote.Signature.Data) > 0 {
+			sig.Signature.Data = make([]byte, len(vote.Signature.Data))
+			copy(sig.Signature.Data, vote.Signature.Data)
 		}
 		sigs = append(sigs, sig)
 	}
@@ -298,10 +310,12 @@ func (vs *VoteSet) MakeCommit() *gen.Commit {
 		return sigs[i].ValidatorIndex < sigs[j].ValidatorIndex
 	})
 
+	// NINTH_REFACTOR: Deep copy block hash to prevent corruption
+	blockHashCopy := types.CopyHash(blockHash)
 	return &gen.Commit{
 		Height:     vs.height,
 		Round:      vs.round,
-		BlockHash:  *blockHash,
+		BlockHash:  *blockHashCopy,
 		Signatures: sigs,
 	}
 }

@@ -345,6 +345,20 @@ func (p *Pool) pruneExpired() {
 	}
 	p.pending = valid
 
+	// NINTH_REFACTOR: Prune old committed evidence to prevent unbounded memory growth.
+	// Previously, the committed map was never pruned and would grow forever.
+	for key := range p.committed {
+		// Parse height from key (format: type/height/time/hash)
+		var evType int
+		var height int64
+		var evTime int64
+		if _, err := fmt.Sscanf(key, "%d/%d/%d/", &evType, &height, &evTime); err == nil {
+			if p.currentHeight-height > p.config.MaxAgeBlocks {
+				delete(p.committed, key)
+			}
+		}
+	}
+
 	// Also prune old seen votes
 	for key, vote := range p.seenVotes {
 		if p.currentHeight-vote.Height > p.config.MaxAgeBlocks {

@@ -826,9 +826,12 @@ func (cs *ConsensusState) finalizeCommitLocked(height int64, commit *gen.Commit)
 	cs.votes.Reset(cs.height, cs.validatorSet)
 
 	// Schedule commit timeout before starting new height
+	// NINTH_REFACTOR: Use cs.height (new height) not the 'height' parameter (old height).
+	// Previously, commit timeouts were scheduled with the old height, which meant
+	// they would always be ignored in handleTimeout because ti.Height != cs.height.
 	if !cs.config.SkipTimeoutCommit {
 		cs.scheduleTimeout(TimeoutInfo{
-			Height: height,
+			Height: cs.height,
 			Round:  0,
 			Step:   RoundStepCommit,
 		})
