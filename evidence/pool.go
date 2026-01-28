@@ -168,6 +168,18 @@ func (p *Pool) AddDuplicateVoteEvidence(dve *gen.DuplicateVoteEvidence) error {
 	return p.AddEvidence(ev)
 }
 
+// evidenceSize calculates the serialized size of evidence.
+// L4: Proper size estimate based on Evidence schema structure:
+// - Type: 4 bytes (uint32)
+// - Height: 8 bytes (int64)
+// - Time: 8 bytes (int64)
+// - Data: 4 bytes (length prefix) + len(Data)
+const evidenceOverhead = 4 + 8 + 8 + 4 // 24 bytes
+
+func evidenceSize(ev *gen.Evidence) int64 {
+	return int64(evidenceOverhead + len(ev.Data))
+}
+
 // PendingEvidence returns evidence to include in blocks, up to maxBytes
 func (p *Pool) PendingEvidence(maxBytes int64) []gen.Evidence {
 	p.mu.RLock()
@@ -181,8 +193,8 @@ func (p *Pool) PendingEvidence(maxBytes int64) []gen.Evidence {
 	var totalSize int64
 
 	for _, ev := range p.pending {
-		// Estimate size
-		evSize := int64(len(ev.Data) + 50)
+		// L4: Use proper size calculation
+		evSize := evidenceSize(ev)
 		if totalSize+evSize > maxBytes {
 			break
 		}

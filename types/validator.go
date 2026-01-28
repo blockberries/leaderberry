@@ -33,6 +33,7 @@ var (
 	ErrInvalidVotingPower = errors.New("invalid voting power")
 	ErrTooManyValidators  = errors.New("too many validators")
 	ErrTotalPowerOverflow = errors.New("total voting power overflow")
+	ErrEmptyValidatorName = errors.New("validator has empty name")
 )
 
 // ValidatorSet wraps ValidatorSetData with additional methods
@@ -61,6 +62,10 @@ func NewValidatorSet(validators []*NamedValidator) (*ValidatorSet, error) {
 
 	// Copy and validate
 	for i, v := range validators {
+		// L5: Check for empty validator name to prevent panics in Hash()
+		if IsAccountNameEmpty(v.Name) {
+			return nil, fmt.Errorf("%w: validator %d", ErrEmptyValidatorName, i)
+		}
 		if v.VotingPower <= 0 {
 			return nil, ErrInvalidVotingPower
 		}
@@ -115,13 +120,17 @@ func (vs *ValidatorSet) initProposerPriorities() {
 	vs.centerPriorities()
 }
 
-// centerPriorities centers the priorities around zero
+// centerPriorities centers the priorities around zero.
+// L6: Integer division means centering is approximate. This is acceptable
+// as the important property is that priorities remain bounded, not exact centering.
+// The lost fractional part (sum % len) is at most (len-1), which is negligible
+// compared to typical priority values.
 func (vs *ValidatorSet) centerPriorities() {
 	if len(vs.Validators) == 0 {
 		return
 	}
 
-	// Calculate average
+	// Calculate average (integer division - some precision loss is acceptable)
 	var sum int64
 	for _, v := range vs.Validators {
 		sum += v.ProposerPriority

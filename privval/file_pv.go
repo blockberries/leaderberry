@@ -485,13 +485,20 @@ func (pv *FilePV) isSameProposal(proposal *gen.Proposal) bool {
 }
 
 // isSameVote checks if a vote matches the last signed vote
+// isSameVote checks if the vote matches the last signed vote.
+// M6: This is called only after CheckHRS verified H/R/S match, so we only
+// need to check that block hash matches. If all of H/R/S/BlockHash match,
+// re-signing would produce the same signature (deterministic signing).
 func (pv *FilePV) isSameVote(vote *gen.Vote) bool {
+	// Both nil - same vote for nil block
 	if pv.lastSignState.BlockHash == nil && vote.BlockHash == nil {
 		return true
 	}
+	// One nil, one not - different votes
 	if pv.lastSignState.BlockHash == nil || vote.BlockHash == nil {
 		return false
 	}
+	// Both non-nil - compare hashes
 	return types.HashEqual(*pv.lastSignState.BlockHash, *vote.BlockHash)
 }
 

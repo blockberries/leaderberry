@@ -1472,12 +1472,12 @@ Before marking complete:
 |----------|-------|--------|
 | Critical | 5 | **DONE** |
 | High | 6 | **DONE** |
-| Medium | 8 | 4 Done, 4 Pending |
-| Low | 6 | 2 Done, 4 Pending |
+| Medium | 8 | **DONE** |
+| Low | 6 | 5 Done, 1 Pending |
 | Missing Functionality | 5 | Pending |
 
 **Total Issues**: 30
-**Completed**: 17
+**Completed**: 24
 
 ### Implemented in Phase 1
 - **CR1**: Deadlock fix - Added `Locked` pattern to all state transition functions
@@ -1500,13 +1500,15 @@ Before marking complete:
 - **L1**: Hex encoding for block hash keys (debuggability)
 - **L3**: Use sort.Ints instead of bubble sort
 
+### Implemented in Phase 3
+- **M2**: POL validation - Added validatePOL() with full signature verification
+- **M3**: Evidence pool integration - Equivocation detection in handleVote
+- **M4**: Message length check - Fixed to `< 1` with explicit empty checks
+- **M6**: isSameVote - Added documentation (logic is correct)
+- **L4**: Evidence size estimate - Proper schema-based calculation
+- **L5**: ValidatorSet nil name check - Reject empty names in NewValidatorSet
+- **L6**: centerPriorities precision - Documented acceptable precision loss
+
 ### Remaining Work
-- M2: POL validation
-- M3: Evidence pool integration
-- M4: Message length check
-- M6: isSameVote signature check
-- L2: GC pressure in WAL decoder
-- L4: Evidence size estimate
-- L5: ValidatorSet hash nil name check
-- L6: centerPriorities precision loss (document only)
-- MF1-MF5: Missing functionality
+- L2: GC pressure in WAL decoder (performance optimization, low priority)
+- MF1-MF5: Missing functionality (block parts, catch-up, validator updates, etc.)

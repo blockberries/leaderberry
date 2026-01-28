@@ -6,6 +6,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-01-28 - Second Refactor Phase 3
+
+Remaining medium and low severity fixes from comprehensive code review.
+
+### Medium Severity Fixes (M2-M4, M6)
+
+#### M2: POL (Proof of Lock) Validation
+- Added `validatePOL()` function in consensus state
+- Validates POL votes have correct signatures, height/round, and block hash
+- Verifies 2/3+ voting power in POL
+- Rejects proposals with invalid POL
+
+#### M3: Evidence Pool Integration
+- Added `evidencePool` field to ConsensusState
+- `SetEvidencePool()` method to configure evidence pool
+- `handleVote()` now checks for equivocation before processing
+- Detected equivocation is logged and added to evidence pool
+
+#### M4: Message Length Check
+- Fixed minimum length check from `< 2` to `< 1`
+- Added explicit empty payload checks for each message type
+- Returns descriptive error for empty proposal/vote payloads
+
+#### M6: isSameVote Documentation
+- Added documentation explaining why block hash comparison is sufficient
+- CheckHRS already validates H/R/S match before isSameVote is called
+
+### Low Severity Fixes (L4-L6)
+
+#### L4: Evidence Size Estimate
+- Replaced arbitrary 50-byte overhead with proper calculation
+- Added `evidenceSize()` function with documented schema-based overhead
+- Evidence overhead: 24 bytes (Type + Height + Time + length prefix)
+
+#### L5: ValidatorSet Nil Name Check
+- `NewValidatorSet()` now rejects validators with empty names
+- Added `ErrEmptyValidatorName` error
+- Prevents potential panics in `Hash()` when sorting by name
+
+#### L6: Document centerPriorities Precision
+- Added documentation explaining integer division precision loss
+- Precision loss is acceptable for bounded priority maintenance
+
+### Added
+- `validatePOL()` method for POL validation
+- `SetEvidencePool()` method for evidence pool configuration
+- `evidenceSize()` helper function
+- `ErrEmptyValidatorName` error constant
+
 ## [0.4.0] - 2026-01-28 - Second Refactor Phase 2
 
 Additional high, medium, and low severity fixes from comprehensive code review.

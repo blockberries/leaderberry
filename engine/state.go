@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/blockberries/leaderberry/evidence"
 	"github.com/blockberries/leaderberry/types"
 	"github.com/blockberries/leaderberry/wal"
 	gen "github.com/blockberries/leaderberry/types/generated"
@@ -70,6 +71,9 @@ type ConsensusState struct {
 	// Broadcast callbacks (CR1/M8: for sending messages to peers)
 	onProposal func(*gen.Proposal)
 	onVote     func(*gen.Vote)
+
+	// M3: Evidence pool for Byzantine fault detection
+	evidencePool *evidence.Pool
 
 	// Control
 	ctx    context.Context
@@ -136,6 +140,13 @@ func (cs *ConsensusState) SetBroadcastCallbacks(
 	defer cs.mu.Unlock()
 	cs.onProposal = onProposal
 	cs.onVote = onVote
+}
+
+// SetEvidencePool sets the evidence pool for Byzantine fault detection (M3)
+func (cs *ConsensusState) SetEvidencePool(pool *evidence.Pool) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.evidencePool = pool
 }
 
 // Start starts the consensus state machine at the given height
@@ -422,6 +433,14 @@ func (cs *ConsensusState) handleProposal(proposal *gen.Proposal) {
 		return
 	}
 
+	// M2: Validate POL (Proof of Lock) if present
+	if proposal.PolRound >= 0 {
+		if err := cs.validatePOL(proposal); err != nil {
+			log.Printf("[DEBUG] consensus: proposal POL validation failed: %v", err)
+			return
+		}
+	}
+
 	// Validate block (if executor available)
 	if cs.blockExecutor != nil {
 		if err := cs.blockExecutor.ValidateBlock(&proposal.Block); err != nil {
@@ -449,6 +468,73 @@ func (cs *ConsensusState) handleProposal(proposal *gen.Proposal) {
 
 	// Enter prevote (use locked version since we hold the lock)
 	cs.enterPrevoteLocked(cs.height, cs.round)
+}
+
+// validatePOL validates the Proof of Lock votes in a proposal
+// M2: Ensures POL votes are valid, from known validators, and total to 2/3+
+func (cs *ConsensusState) validatePOL(proposal *gen.Proposal) error {
+	if len(proposal.PolVotes) == 0 {
+		return fmt.Errorf("POL round %d set but no POL votes provided", proposal.PolRound)
+	}
+
+	blockHash := types.BlockHash(&proposal.Block)
+	var polPower int64
+	seenValidators := make(map[uint16]bool)
+
+	for i, vote := range proposal.PolVotes {
+		// Must be prevote
+		if vote.Type != types.VoteTypePrevote {
+			return fmt.Errorf("POL vote %d is not a prevote (type=%d)", i, vote.Type)
+		}
+
+		// Must be for the correct height/round
+		if vote.Height != proposal.Height {
+			return fmt.Errorf("POL vote %d has wrong height: %d != %d", i, vote.Height, proposal.Height)
+		}
+		if vote.Round != proposal.PolRound {
+			return fmt.Errorf("POL vote %d has wrong round: %d != %d", i, vote.Round, proposal.PolRound)
+		}
+
+		// Must be for this block
+		if vote.BlockHash == nil {
+			return fmt.Errorf("POL vote %d has nil block hash", i)
+		}
+		if !types.HashEqual(*vote.BlockHash, blockHash) {
+			return fmt.Errorf("POL vote %d is for different block", i)
+		}
+
+		// Validator must exist
+		val := cs.validatorSet.GetByIndex(vote.ValidatorIndex)
+		if val == nil {
+			return fmt.Errorf("POL vote %d from unknown validator index %d", i, vote.ValidatorIndex)
+		}
+
+		// Validator name must match
+		if !types.AccountNameEqual(val.Name, vote.Validator) {
+			return fmt.Errorf("POL vote %d validator name mismatch", i)
+		}
+
+		// No duplicate votes
+		if seenValidators[vote.ValidatorIndex] {
+			return fmt.Errorf("duplicate POL vote from validator %d", vote.ValidatorIndex)
+		}
+		seenValidators[vote.ValidatorIndex] = true
+
+		// Verify signature
+		if err := types.VerifyVoteSignature(cs.config.ChainID, &vote, val.PublicKey); err != nil {
+			return fmt.Errorf("POL vote %d has invalid signature: %w", i, err)
+		}
+
+		polPower += val.VotingPower
+	}
+
+	// Must have 2/3+ power
+	required := cs.validatorSet.TwoThirdsMajority()
+	if polPower < required {
+		return fmt.Errorf("POL has insufficient power: %d < %d", polPower, required)
+	}
+
+	return nil
 }
 
 // enterPrevoteLocked enters the prevote step (internal, caller must hold lock)
@@ -648,6 +734,23 @@ func (cs *ConsensusState) finalizeCommitLocked(height int64, commit *gen.Commit)
 func (cs *ConsensusState) handleVote(vote *gen.Vote) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
+
+	// M3: Check for equivocation BEFORE adding
+	if cs.evidencePool != nil {
+		dve, err := cs.evidencePool.CheckVote(vote, cs.validatorSet)
+		if err != nil {
+			log.Printf("[DEBUG] consensus: evidence check error: %v", err)
+		}
+		if dve != nil {
+			// Found equivocation! Add to evidence pool
+			log.Printf("[WARN] consensus: detected equivocation from validator %s at H=%d R=%d",
+				types.AccountNameString(vote.Validator), vote.Height, vote.Round)
+			if err := cs.evidencePool.AddDuplicateVoteEvidence(dve); err != nil {
+				log.Printf("[DEBUG] consensus: failed to add evidence: %v", err)
+			}
+			// Continue processing - we still track the vote even if it's equivocation
+		}
+	}
 
 	// H1: Write to WAL BEFORE adding - PANIC on failure
 	if cs.wal != nil {

@@ -231,16 +231,20 @@ func (e *Engine) ChainID() string {
 
 // HandleConsensusMessage handles a consensus message from the network.
 // Messages must be prefixed with a single byte indicating the message type.
+// M4: Fixed length check to properly validate message structure
 func (e *Engine) HandleConsensusMessage(peerID string, data []byte) error {
-	if len(data) < 2 {
+	if len(data) < 1 {
 		return ErrInvalidMessage
 	}
 
 	msgType := ConsensusMessageType(data[0])
-	payload := data[1:]
+	payload := data[1:] // May be empty
 
 	switch msgType {
 	case ConsensusMessageTypeProposal:
+		if len(payload) == 0 {
+			return fmt.Errorf("%w: empty proposal payload", ErrInvalidMessage)
+		}
 		proposal := &gen.Proposal{}
 		if err := proposal.UnmarshalCramberry(payload); err != nil {
 			return fmt.Errorf("%w: failed to unmarshal proposal: %v", ErrInvalidMessage, err)
@@ -248,6 +252,9 @@ func (e *Engine) HandleConsensusMessage(peerID string, data []byte) error {
 		return e.AddProposal(proposal)
 
 	case ConsensusMessageTypeVote:
+		if len(payload) == 0 {
+			return fmt.Errorf("%w: empty vote payload", ErrInvalidMessage)
+		}
 		vote := &gen.Vote{}
 		if err := vote.UnmarshalCramberry(payload); err != nil {
 			return fmt.Errorf("%w: failed to unmarshal vote: %v", ErrInvalidMessage, err)
