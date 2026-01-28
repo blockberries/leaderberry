@@ -170,6 +170,7 @@ func (vs *ValidatorSet) TwoThirdsMajority() int64 {
 }
 
 // IncrementProposerPriority updates priorities and selects next proposer
+// DEPRECATED: Use WithIncrementedPriority for thread-safe operations
 func (vs *ValidatorSet) IncrementProposerPriority(times int32) {
 	if len(vs.Validators) == 0 {
 		return
@@ -200,6 +201,22 @@ func (vs *ValidatorSet) IncrementProposerPriority(times int32) {
 
 	vs.centerPriorities()
 	vs.Proposer = vs.getProposer()
+}
+
+// WithIncrementedPriority returns a new ValidatorSet with priorities incremented.
+// This is the immutable pattern for thread-safe proposer rotation (CR4).
+// The original ValidatorSet is not modified.
+func (vs *ValidatorSet) WithIncrementedPriority(times int32) (*ValidatorSet, error) {
+	// Create a deep copy first
+	newVS, err := vs.Copy()
+	if err != nil {
+		return nil, err
+	}
+
+	// Now increment priorities on the copy
+	newVS.IncrementProposerPriority(times)
+
+	return newVS, nil
 }
 
 // Copy creates a deep copy of the validator set.

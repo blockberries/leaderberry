@@ -1470,12 +1470,31 @@ Before marking complete:
 
 | Severity | Count | Status |
 |----------|-------|--------|
-| Critical | 5 | Pending |
-| High | 6 | Pending |
-| Medium | 8 | Pending |
+| Critical | 5 | **DONE** |
+| High | 6 | 2 Done, 4 Pending |
+| Medium | 8 | 2 Done, 6 Pending |
 | Low | 6 | Pending |
 | Missing Functionality | 5 | Pending |
 
 **Total Issues**: 30
+**Completed**: 9
 
-**Estimated Effort**: Significant - the critical issues alone require careful refactoring of the state machine locking strategy.
+### Implemented in Phase 1
+- **CR1**: Deadlock fix - Added `Locked` pattern to all state transition functions
+- **CR2**: Race in HeightVoteSet.AddVote - Keep lock during entire operation
+- **CR3**: Race in ConsensusState.Start - Call enterNewRoundLocked while holding lock
+- **CR4**: Data race on ValidatorSet - Added `WithIncrementedPriority` immutable pattern
+- **CR5**: Ignored vote error - PANIC if own vote fails to add
+- **H1**: WAL writes during consensus - Write to WAL before processing proposals/votes
+- **H2**: Pointer aliasing bug - Make value copy of block before storing pointer
+- **M7**: enterCommit nil handling - PANIC if no commit found
+- **M8**: Broadcast callbacks - Added onProposal/onVote callback mechanism
+
+### Remaining Work
+- H3: ScheduleTimeout blocking
+- H4: TimeoutTicker.Stop wait
+- H5: TwoThirdsMajority overflow
+- H6: WAL legacy migration fix
+- M1-M6: Medium severity issues
+- L1-L6: Low severity issues
+- MF1-MF5: Missing functionality

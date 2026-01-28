@@ -309,13 +309,15 @@ func NewHeightVoteSet(chainID string, height int64, valSet *types.ValidatorSet) 
 	}
 }
 
-// AddVote adds a vote to the appropriate VoteSet
+// AddVote adds a vote to the appropriate VoteSet.
+// CR2: Keep lock held during entire operation to prevent race with Reset().
 func (hvs *HeightVoteSet) AddVote(vote *gen.Vote) (bool, error) {
+	hvs.mu.Lock()
+	defer hvs.mu.Unlock()
+
 	if vote.Height != hvs.height {
 		return false, ErrInvalidHeight
 	}
-
-	hvs.mu.Lock()
 
 	var voteSet *VoteSet
 	if vote.Type == types.VoteTypePrevote {
@@ -331,11 +333,10 @@ func (hvs *HeightVoteSet) AddVote(vote *gen.Vote) (bool, error) {
 			hvs.precommits[vote.Round] = voteSet
 		}
 	} else {
-		hvs.mu.Unlock()
 		return false, ErrInvalidVote
 	}
 
-	hvs.mu.Unlock()
+	// VoteSet has its own mutex, so nested locking is safe
 	return voteSet.AddVote(vote)
 }
 
@@ -355,8 +356,10 @@ func (hvs *HeightVoteSet) Precommits(round int32) *VoteSet {
 
 // SetPeerMaj23 records that a peer claims to have seen 2/3+ votes for a block.
 // This is used for proof-of-lock validation and requesting missing votes.
+// CR2: Keep lock held during entire operation to prevent race with Reset().
 func (hvs *HeightVoteSet) SetPeerMaj23(peerID string, round int32, voteType gen.VoteType, blockHash *types.Hash) {
 	hvs.mu.Lock()
+	defer hvs.mu.Unlock()
 
 	var voteSet *VoteSet
 	if voteType == types.VoteTypePrevote {
@@ -373,9 +376,8 @@ func (hvs *HeightVoteSet) SetPeerMaj23(peerID string, round int32, voteType gen.
 		}
 	}
 
-	hvs.mu.Unlock()
-
 	// Record the peer's claim on the vote set
+	// VoteSet has its own mutex, so nested locking is safe
 	voteSet.SetPeerMaj23(peerID, blockHash)
 }
 

@@ -6,6 +6,63 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-01-28 - Second Refactor Phase 1
+
+Critical fixes for deadlocks, data races, and consensus safety identified during comprehensive code review.
+
+### Critical Fixes (CR1-CR5)
+
+#### CR1: Deadlock in finalizeCommit → enterNewRound
+- Introduced "Locked" pattern for all state transition functions
+- Public functions acquire lock, internal "Locked" versions assume lock held
+- `finalizeCommit` now calls `enterNewRoundLocked` when `SkipTimeoutCommit=true`
+
+#### CR2: Race Condition in HeightVoteSet.AddVote
+- Keep lock held during entire `AddVote` operation
+- Same fix applied to `SetPeerMaj23`
+- Prevents race with `Reset()` clearing vote sets
+
+#### CR3: Race Condition in ConsensusState.Start
+- `Start()` now calls `enterNewRoundLocked` while holding lock
+- Ensures no gap where state can be modified by other goroutines
+
+#### CR4: Data Race on ValidatorSet
+- Added `WithIncrementedPriority()` immutable method
+- Returns new `ValidatorSet` copy with priorities incremented
+- Original set is not modified - safe for concurrent access
+- Marked `IncrementProposerPriority()` as deprecated
+
+#### CR5: Ignored Vote Error After Signing
+- `signAndSendVoteLocked` now PANICs if own vote fails to add
+- Own vote must always be tracked - failure indicates consensus corruption
+
+### High Severity Fixes (H1-H2)
+
+#### H1: WAL Writes During Consensus
+- Added WAL writes BEFORE processing proposals and votes
+- PANICs on WAL write failure (consensus critical)
+- Writes `EndHeight` after block commit
+
+#### H2: Pointer to Proposal Block Field (Aliasing Bug)
+- `handleProposal` now makes value copy of block before storing pointer
+- Prevents issues if proposal is modified or garbage collected
+
+### Medium Severity Fixes (M7-M8)
+
+#### M7: enterCommit Nil Block Handling
+- PANICs if `enterCommit` called but no commit found
+- Indicates bug in state machine that must be fixed
+
+#### M8: Broadcast Callbacks
+- Added `onProposal` and `onVote` callback fields
+- `SetBroadcastCallbacks()` method for Engine to register
+- Callbacks invoked after creating proposals/votes
+
+### Changed
+- All state transitions have public (lock-acquiring) and internal (Locked) versions
+- `ValidatorSet.Copy()` used by `WithIncrementedPriority()` for immutable updates
+- WAL is now written to during consensus operations
+
 ### Added
 - SECOND_REFACTOR.md documenting comprehensive code review findings
 

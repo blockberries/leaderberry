@@ -67,6 +67,10 @@ type ConsensusState struct {
 	// Block execution callback
 	blockExecutor BlockExecutor
 
+	// Broadcast callbacks (CR1/M8: for sending messages to peers)
+	onProposal func(*gen.Proposal)
+	onVote     func(*gen.Vote)
+
 	// Control
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -123,12 +127,24 @@ func NewConsensusState(
 	}
 }
 
+// SetBroadcastCallbacks sets the callbacks for broadcasting messages to peers (M8)
+func (cs *ConsensusState) SetBroadcastCallbacks(
+	onProposal func(*gen.Proposal),
+	onVote func(*gen.Vote),
+) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.onProposal = onProposal
+	cs.onVote = onVote
+}
+
 // Start starts the consensus state machine at the given height
+// CR3: Fixed race condition by calling enterNewRoundLocked while holding lock
 func (cs *ConsensusState) Start(height int64, lastCommit *gen.Commit) error {
 	cs.mu.Lock()
+	defer cs.mu.Unlock()
 
 	if cs.started {
-		cs.mu.Unlock()
 		return ErrAlreadyStarted
 	}
 
@@ -145,10 +161,8 @@ func (cs *ConsensusState) Start(height int64, lastCommit *gen.Commit) error {
 	cs.wg.Add(1)
 	go cs.receiveRoutine()
 
-	cs.mu.Unlock()
-
-	// Enter new height (outside lock to avoid deadlock)
-	cs.enterNewRound(height, 0)
+	// Enter new round while holding lock (CR3 fix)
+	cs.enterNewRoundLocked(height, 0)
 
 	return nil
 }
@@ -220,11 +234,58 @@ func (cs *ConsensusState) receiveRoutine() {
 	}
 }
 
-// enterNewRound enters a new round at the given height
+// ============================================================================
+// State transition functions - public versions acquire lock
+// ============================================================================
+
+// enterNewRound enters a new round at the given height (public, acquires lock)
 func (cs *ConsensusState) enterNewRound(height int64, round int32) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
+	cs.enterNewRoundLocked(height, round)
+}
 
+// enterPrevote enters the prevote step (public, acquires lock)
+func (cs *ConsensusState) enterPrevote(height int64, round int32) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.enterPrevoteLocked(height, round)
+}
+
+// enterPrevoteWait enters the prevote wait step (public, acquires lock)
+func (cs *ConsensusState) enterPrevoteWait(height int64, round int32) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.enterPrevoteWaitLocked(height, round)
+}
+
+// enterPrecommit enters the precommit step (public, acquires lock)
+func (cs *ConsensusState) enterPrecommit(height int64, round int32) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.enterPrecommitLocked(height, round)
+}
+
+// enterPrecommitWait enters the precommit wait step (public, acquires lock)
+func (cs *ConsensusState) enterPrecommitWait(height int64, round int32) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.enterPrecommitWaitLocked(height, round)
+}
+
+// enterCommit enters the commit step (public, acquires lock)
+func (cs *ConsensusState) enterCommit(height int64) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.enterCommitLocked(height)
+}
+
+// ============================================================================
+// State transition functions - locked versions assume lock is held (CR1 fix)
+// ============================================================================
+
+// enterNewRoundLocked enters a new round (internal, caller must hold lock)
+func (cs *ConsensusState) enterNewRoundLocked(height int64, round int32) {
 	if cs.height != height || round < cs.round {
 		return
 	}
@@ -252,12 +313,12 @@ func (cs *ConsensusState) enterNewRound(height int64, round int32) {
 	// Check if we're the proposer
 	proposer := cs.validatorSet.Proposer
 	if cs.privVal != nil && types.PublicKeyEqual(proposer.PublicKey, cs.privVal.GetPubKey()) {
-		cs.createAndSendProposal()
+		cs.createAndSendProposalLocked()
 	}
 }
 
-// createAndSendProposal creates and broadcasts a proposal
-func (cs *ConsensusState) createAndSendProposal() {
+// createAndSendProposalLocked creates and broadcasts a proposal (caller must hold lock)
+func (cs *ConsensusState) createAndSendProposalLocked() {
 	// Get block to propose
 	var block *gen.Block
 
@@ -280,6 +341,7 @@ func (cs *ConsensusState) createAndSendProposal() {
 			cs.validatorSet.Proposer.Name,
 		)
 		if err != nil {
+			log.Printf("[WARN] consensus: failed to create proposal block: %v", err)
 			return
 		}
 	}
@@ -309,13 +371,28 @@ func (cs *ConsensusState) createAndSendProposal() {
 
 	// Sign proposal
 	if err := cs.privVal.SignProposal(cs.config.ChainID, proposal); err != nil {
+		log.Printf("[WARN] consensus: failed to sign proposal: %v", err)
 		return
+	}
+
+	// H1: Write to WAL BEFORE accepting - PANIC on failure
+	if cs.wal != nil {
+		msg, err := wal.NewProposalMessage(proposal.Height, proposal.Round, proposal)
+		if err != nil {
+			panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to create WAL message for own proposal: %v", err))
+		}
+		if err := cs.wal.WriteSync(msg); err != nil {
+			panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to write own proposal to WAL: %v", err))
+		}
 	}
 
 	cs.proposal = proposal
 	cs.proposalBlock = block
 
-	// Broadcast proposal (via callback, not implemented here)
+	// M8: Broadcast proposal to peers
+	if cs.onProposal != nil {
+		cs.onProposal(proposal)
+	}
 }
 
 // handleProposal processes a received proposal
@@ -352,16 +429,30 @@ func (cs *ConsensusState) handleProposal(proposal *gen.Proposal) {
 		}
 	}
 
+	// H1: Write to WAL BEFORE accepting - PANIC on failure
+	if cs.wal != nil {
+		msg, err := wal.NewProposalMessage(proposal.Height, proposal.Round, proposal)
+		if err != nil {
+			panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to create WAL message for proposal: %v", err))
+		}
+		if err := cs.wal.WriteSync(msg); err != nil {
+			panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to write proposal to WAL: %v", err))
+		}
+	}
+
 	// Accept proposal
 	cs.proposal = proposal
-	cs.proposalBlock = &proposal.Block
 
-	// Enter prevote
-	cs.enterPrevote(cs.height, cs.round)
+	// H2: Make a copy of the block to avoid aliasing issues
+	blockCopy := proposal.Block
+	cs.proposalBlock = &blockCopy
+
+	// Enter prevote (use locked version since we hold the lock)
+	cs.enterPrevoteLocked(cs.height, cs.round)
 }
 
-// enterPrevote enters the prevote step
-func (cs *ConsensusState) enterPrevote(height int64, round int32) {
+// enterPrevoteLocked enters the prevote step (internal, caller must hold lock)
+func (cs *ConsensusState) enterPrevoteLocked(height int64, round int32) {
 	if cs.height != height || cs.round != round || cs.step >= RoundStepPrevote {
 		return
 	}
@@ -382,11 +473,11 @@ func (cs *ConsensusState) enterPrevote(height int64, round int32) {
 	}
 	// else prevote nil
 
-	cs.signAndSendVote(types.VoteTypePrevote, blockHash)
+	cs.signAndSendVoteLocked(types.VoteTypePrevote, blockHash)
 }
 
-// enterPrevoteWait enters the prevote wait step
-func (cs *ConsensusState) enterPrevoteWait(height int64, round int32) {
+// enterPrevoteWaitLocked enters the prevote wait step (internal, caller must hold lock)
+func (cs *ConsensusState) enterPrevoteWaitLocked(height int64, round int32) {
 	if cs.height != height || cs.round != round || cs.step >= RoundStepPrevoteWait {
 		return
 	}
@@ -400,8 +491,8 @@ func (cs *ConsensusState) enterPrevoteWait(height int64, round int32) {
 	})
 }
 
-// enterPrecommit enters the precommit step
-func (cs *ConsensusState) enterPrecommit(height int64, round int32) {
+// enterPrecommitLocked enters the precommit step (internal, caller must hold lock)
+func (cs *ConsensusState) enterPrecommitLocked(height int64, round int32) {
 	if cs.height != height || cs.round != round || cs.step >= RoundStepPrecommit {
 		return
 	}
@@ -410,14 +501,14 @@ func (cs *ConsensusState) enterPrecommit(height int64, round int32) {
 
 	prevotes := cs.votes.Prevotes(round)
 	if prevotes == nil {
-		cs.signAndSendVote(types.VoteTypePrecommit, nil)
+		cs.signAndSendVoteLocked(types.VoteTypePrecommit, nil)
 		return
 	}
 
 	blockHash, ok := prevotes.TwoThirdsMajority()
 	if !ok {
 		// No 2/3+ for any block
-		cs.signAndSendVote(types.VoteTypePrecommit, nil)
+		cs.signAndSendVoteLocked(types.VoteTypePrecommit, nil)
 		return
 	}
 
@@ -425,7 +516,7 @@ func (cs *ConsensusState) enterPrecommit(height int64, round int32) {
 		// 2/3+ prevoted nil - unlock
 		cs.lockedRound = -1
 		cs.lockedBlock = nil
-		cs.signAndSendVote(types.VoteTypePrecommit, nil)
+		cs.signAndSendVoteLocked(types.VoteTypePrecommit, nil)
 		return
 	}
 
@@ -437,17 +528,17 @@ func (cs *ConsensusState) enterPrecommit(height int64, round int32) {
 			cs.lockedBlock = cs.proposalBlock
 			cs.validRound = round
 			cs.validBlock = cs.proposalBlock
-			cs.signAndSendVote(types.VoteTypePrecommit, blockHash)
+			cs.signAndSendVoteLocked(types.VoteTypePrecommit, blockHash)
 			return
 		}
 	}
 
 	// We don't have the block, precommit nil
-	cs.signAndSendVote(types.VoteTypePrecommit, nil)
+	cs.signAndSendVoteLocked(types.VoteTypePrecommit, nil)
 }
 
-// enterPrecommitWait enters the precommit wait step
-func (cs *ConsensusState) enterPrecommitWait(height int64, round int32) {
+// enterPrecommitWaitLocked enters the precommit wait step (internal, caller must hold lock)
+func (cs *ConsensusState) enterPrecommitWaitLocked(height int64, round int32) {
 	if cs.height != height || cs.round != round || cs.step >= RoundStepPrecommitWait {
 		return
 	}
@@ -461,8 +552,8 @@ func (cs *ConsensusState) enterPrecommitWait(height int64, round int32) {
 	})
 }
 
-// enterCommit enters the commit step
-func (cs *ConsensusState) enterCommit(height int64) {
+// enterCommitLocked enters the commit step (internal, caller must hold lock)
+func (cs *ConsensusState) enterCommitLocked(height int64) {
 	if cs.height != height || cs.step >= RoundStepCommit {
 		return
 	}
@@ -480,15 +571,20 @@ func (cs *ConsensusState) enterCommit(height int64) {
 			// Found commit round
 			commit := precommits.MakeCommit()
 			if commit != nil {
-				cs.finalizeCommit(height, commit)
+				cs.finalizeCommitLocked(height, commit)
 				return
 			}
 		}
 	}
+
+	// M7: If we reach here, enterCommit was called incorrectly
+	// This indicates a bug in the state machine
+	panic(fmt.Sprintf("CONSENSUS CRITICAL: enterCommit called at height %d but no commit found", height))
 }
 
-// finalizeCommit finalizes a committed block
-func (cs *ConsensusState) finalizeCommit(height int64, commit *gen.Commit) {
+// finalizeCommitLocked finalizes a committed block (internal, caller must hold lock)
+// CR1: Now uses locked state transition functions to avoid deadlock
+func (cs *ConsensusState) finalizeCommitLocked(height int64, commit *gen.Commit) {
 	// Get the block
 	block := cs.lockedBlock
 	if block == nil {
@@ -505,6 +601,14 @@ func (cs *ConsensusState) finalizeCommit(height int64, commit *gen.Commit) {
 		}
 	}
 
+	// H1: Write EndHeight to WAL - PANIC on failure
+	if cs.wal != nil {
+		msg := wal.NewEndHeightMessage(height)
+		if err := cs.wal.WriteSync(msg); err != nil {
+			panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to write EndHeight to WAL: %v", err))
+		}
+	}
+
 	// Move to next height
 	cs.height = height + 1
 	cs.round = 0
@@ -517,8 +621,12 @@ func (cs *ConsensusState) finalizeCommit(height int64, commit *gen.Commit) {
 	cs.validBlock = nil
 	cs.lastCommit = commit
 
-	// Increment proposer priority
-	cs.validatorSet.IncrementProposerPriority(1)
+	// CR4: Create new validator set with incremented priority (immutable pattern)
+	newValSet, err := cs.validatorSet.WithIncrementedPriority(1)
+	if err != nil {
+		panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to update validator set: %v", err))
+	}
+	cs.validatorSet = newValSet
 
 	// Reset votes
 	cs.votes.Reset(cs.height, cs.validatorSet)
@@ -531,7 +639,8 @@ func (cs *ConsensusState) finalizeCommit(height int64, commit *gen.Commit) {
 			Step:   RoundStepCommit,
 		})
 	} else {
-		cs.enterNewRound(cs.height, 0)
+		// CR1: Use locked version to avoid deadlock
+		cs.enterNewRoundLocked(cs.height, 0)
 	}
 }
 
@@ -539,6 +648,17 @@ func (cs *ConsensusState) finalizeCommit(height int64, commit *gen.Commit) {
 func (cs *ConsensusState) handleVote(vote *gen.Vote) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
+
+	// H1: Write to WAL BEFORE adding - PANIC on failure
+	if cs.wal != nil {
+		msg, err := wal.NewVoteMessage(vote.Height, vote.Round, vote)
+		if err != nil {
+			panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to create WAL message for vote: %v", err))
+		}
+		if err := cs.wal.Write(msg); err != nil {
+			panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to write vote to WAL: %v", err))
+		}
+	}
 
 	// Add vote
 	added, err := cs.votes.AddVote(vote)
@@ -549,13 +669,14 @@ func (cs *ConsensusState) handleVote(vote *gen.Vote) {
 	// Check for state transitions
 	switch vote.Type {
 	case types.VoteTypePrevote:
-		cs.handlePrevote(vote)
+		cs.handlePrevoteLocked(vote)
 	case types.VoteTypePrecommit:
-		cs.handlePrecommit(vote)
+		cs.handlePrecommitLocked(vote)
 	}
 }
 
-func (cs *ConsensusState) handlePrevote(vote *gen.Vote) {
+// handlePrevoteLocked handles a prevote (internal, caller must hold lock)
+func (cs *ConsensusState) handlePrevoteLocked(vote *gen.Vote) {
 	prevotes := cs.votes.Prevotes(vote.Round)
 	if prevotes == nil {
 		return
@@ -565,17 +686,18 @@ func (cs *ConsensusState) handlePrevote(vote *gen.Vote) {
 	if prevotes.HasTwoThirdsMajority() {
 		// Enter precommit
 		if cs.step == RoundStepPrevote && vote.Round == cs.round {
-			cs.enterPrecommit(cs.height, cs.round)
+			cs.enterPrecommitLocked(cs.height, cs.round)
 		}
 	} else if prevotes.HasTwoThirdsAny() {
 		// Enter prevote wait
 		if cs.step == RoundStepPrevote && vote.Round == cs.round {
-			cs.enterPrevoteWait(cs.height, cs.round)
+			cs.enterPrevoteWaitLocked(cs.height, cs.round)
 		}
 	}
 }
 
-func (cs *ConsensusState) handlePrecommit(vote *gen.Vote) {
+// handlePrecommitLocked handles a precommit (internal, caller must hold lock)
+func (cs *ConsensusState) handlePrecommitLocked(vote *gen.Vote) {
 	precommits := cs.votes.Precommits(vote.Round)
 	if precommits == nil {
 		return
@@ -585,11 +707,11 @@ func (cs *ConsensusState) handlePrecommit(vote *gen.Vote) {
 	blockHash, ok := precommits.TwoThirdsMajority()
 	if ok && blockHash != nil && !types.IsHashEmpty(blockHash) {
 		// Commit!
-		cs.enterCommit(cs.height)
+		cs.enterCommitLocked(cs.height)
 	} else if precommits.HasTwoThirdsAny() {
 		// Enter precommit wait
 		if cs.step == RoundStepPrecommit && vote.Round == cs.round {
-			cs.enterPrecommitWait(cs.height, cs.round)
+			cs.enterPrecommitWaitLocked(cs.height, cs.round)
 		}
 	}
 }
@@ -607,28 +729,29 @@ func (cs *ConsensusState) handleTimeout(ti TimeoutInfo) {
 	switch ti.Step {
 	case RoundStepPropose:
 		if cs.step == RoundStepPropose {
-			cs.enterPrevote(cs.height, cs.round)
+			cs.enterPrevoteLocked(cs.height, cs.round)
 		}
 
 	case RoundStepPrevoteWait:
 		if cs.step == RoundStepPrevoteWait {
-			cs.enterPrecommit(cs.height, cs.round)
+			cs.enterPrecommitLocked(cs.height, cs.round)
 		}
 
 	case RoundStepPrecommitWait:
 		if cs.step == RoundStepPrecommitWait {
 			// Move to next round
-			cs.enterNewRound(cs.height, cs.round+1)
+			cs.enterNewRoundLocked(cs.height, cs.round+1)
 		}
 
 	case RoundStepCommit:
 		// Start new height
-		cs.enterNewRound(cs.height, 0)
+		cs.enterNewRoundLocked(cs.height, 0)
 	}
 }
 
-// signAndSendVote signs and broadcasts a vote
-func (cs *ConsensusState) signAndSendVote(voteType types.VoteType, blockHash *types.Hash) {
+// signAndSendVoteLocked signs and broadcasts a vote (internal, caller must hold lock)
+// CR5: Now PANICs if own vote fails to add (consensus critical)
+func (cs *ConsensusState) signAndSendVoteLocked(voteType types.VoteType, blockHash *types.Hash) {
 	if cs.privVal == nil {
 		return
 	}
@@ -665,13 +788,35 @@ func (cs *ConsensusState) signAndSendVote(voteType types.VoteType, blockHash *ty
 
 	// Sign vote
 	if err := cs.privVal.SignVote(cs.config.ChainID, vote); err != nil {
+		log.Printf("[WARN] consensus: failed to sign vote: %v", err)
 		return
 	}
 
-	// Add to our own vote set
-	cs.votes.AddVote(vote)
+	// H1: Write to WAL BEFORE adding - PANIC on failure
+	if cs.wal != nil {
+		msg, err := wal.NewVoteMessage(vote.Height, vote.Round, vote)
+		if err != nil {
+			panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to create WAL message for own vote: %v", err))
+		}
+		if err := cs.wal.WriteSync(msg); err != nil {
+			panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to write own vote to WAL: %v", err))
+		}
+	}
 
-	// Broadcast vote (via callback, not implemented here)
+	// CR5: Add to our own vote set - PANIC on failure (our own vote must be tracked)
+	added, err := cs.votes.AddVote(vote)
+	if err != nil {
+		panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to add own vote: %v", err))
+	}
+	if !added {
+		// This shouldn't happen for our own fresh vote
+		panic("CONSENSUS CRITICAL: own vote was not added (duplicate?)")
+	}
+
+	// M8: Broadcast vote to peers
+	if cs.onVote != nil {
+		cs.onVote(vote)
+	}
 }
 
 // scheduleTimeout schedules a timeout
@@ -684,6 +829,13 @@ func (cs *ConsensusState) GetState() (height int64, round int32, step RoundStep)
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
 	return cs.height, cs.round, cs.step
+}
+
+// GetValidatorSet returns the current validator set
+func (cs *ConsensusState) GetValidatorSet() *types.ValidatorSet {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.validatorSet
 }
 
 // String returns a string representation of the step
