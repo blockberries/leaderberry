@@ -509,11 +509,16 @@ func (w *FileWAL) Checkpoint(checkpointHeight int64) error {
 			return fmt.Errorf("failed to delete segment %d: %w", idx, err)
 		}
 
-		// Remove heights from index that pointed to this segment
+		// H2: Remove heights from index that pointed to this segment.
+		// Collect keys first to avoid modifying map during iteration.
+		var toDelete []int64
 		for h, segIdx := range w.heightIndex {
 			if segIdx == idx {
-				delete(w.heightIndex, h)
+				toDelete = append(toDelete, h)
 			}
+		}
+		for _, h := range toDelete {
+			delete(w.heightIndex, h)
 		}
 	}
 

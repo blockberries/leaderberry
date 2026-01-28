@@ -140,9 +140,10 @@ func (p *Pool) CheckVote(vote *gen.Vote, valSet *types.ValidatorSet) (*gen.Dupli
 		p.pruneOldestVotes(MaxSeenVotes / 10) // Remove 10%
 	}
 
-	// CR4: Copy vote before storing to prevent caller from modifying it
-	voteCopy := *vote
-	p.seenVotes[key] = &voteCopy
+	// H3: Deep copy vote before storing to prevent caller from modifying it.
+	// A shallow copy is insufficient because slice fields (Signature.Data,
+	// BlockHash.Data) would still share memory with the original.
+	p.seenVotes[key] = types.CopyVote(vote)
 	return nil, nil
 }
 

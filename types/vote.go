@@ -179,6 +179,44 @@ func VerifyCommit(
 	return nil
 }
 
+// CopyVote creates a deep copy of a Vote.
+// H3: This ensures all slice fields (Signature.Data, BlockHash.Data) are copied
+// to prevent the original from being modified through the copy.
+func CopyVote(v *Vote) *Vote {
+	if v == nil {
+		return nil
+	}
+
+	voteCopy := &Vote{
+		Type:           v.Type,
+		Height:         v.Height,
+		Round:          v.Round,
+		Timestamp:      v.Timestamp,
+		ValidatorIndex: v.ValidatorIndex,
+	}
+
+	// Deep copy BlockHash (pointer to Hash with Data []byte)
+	if v.BlockHash != nil {
+		hashCopy := &Hash{}
+		if len(v.BlockHash.Data) > 0 {
+			hashCopy.Data = make([]byte, len(v.BlockHash.Data))
+			copy(hashCopy.Data, v.BlockHash.Data)
+		}
+		voteCopy.BlockHash = hashCopy
+	}
+
+	// Deep copy Validator (AccountName with Name *string)
+	voteCopy.Validator = CopyAccountName(v.Validator)
+
+	// Deep copy Signature (Data []byte)
+	if len(v.Signature.Data) > 0 {
+		voteCopy.Signature.Data = make([]byte, len(v.Signature.Data))
+		copy(voteCopy.Signature.Data, v.Signature.Data)
+	}
+
+	return voteCopy
+}
+
 // VerifyCommitLight is a lighter version that only checks voting power
 // without re-verifying signatures (for use when signatures were already verified).
 func VerifyCommitLight(
