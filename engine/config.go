@@ -16,7 +16,6 @@ type Config struct {
 
 	// Block configuration
 	MaxBlockBytes int64
-	MaxBlockGas   int64
 
 	// Mempool integration
 	CreateEmptyBlocks     bool
@@ -34,7 +33,6 @@ func DefaultConfig() *Config {
 		WALPath:                   "data/cs.wal",
 		WALSync:                   true,
 		MaxBlockBytes:             22020096, // ~21MB
-		MaxBlockGas:               -1,       // no limit
 		CreateEmptyBlocks:         true,
 		CreateEmptyBlocksInterval: 0,
 		SkipTimeoutCommit:         false,
