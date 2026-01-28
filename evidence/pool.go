@@ -29,6 +29,13 @@ const (
 	EvidenceTypeDuplicateVote = gen.EvidenceTypeEvidenceTypeDuplicateVote
 )
 
+// H3: Limits for memory usage
+const (
+	// MaxSeenVotes limits memory usage for equivocation detection.
+	// With 100 validators, 2 vote types per round, this allows ~500 rounds of history.
+	MaxSeenVotes = 100000
+)
+
 // Config holds evidence pool configuration
 type Config struct {
 	// MaxAge is the maximum age of evidence that can be included in blocks
@@ -89,7 +96,8 @@ func (p *Pool) Update(height int64, blockTime time.Time) {
 	p.pruneExpired()
 }
 
-// CheckVote checks a vote for equivocation and returns evidence if found
+// CheckVote checks a vote for equivocation and returns evidence if found.
+// H3: Enforces MaxSeenVotes limit to prevent unbounded memory growth.
 func (p *Pool) CheckVote(vote *gen.Vote, valSet *types.ValidatorSet) (*gen.DuplicateVoteEvidence, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -116,6 +124,11 @@ func (p *Pool) CheckVote(vote *gen.Vote, valSet *types.ValidatorSet) (*gen.Dupli
 		}
 		// Same vote, not equivocation
 		return nil, nil
+	}
+
+	// H3: Enforce size limit - prune oldest entries if needed
+	if len(p.seenVotes) >= MaxSeenVotes {
+		p.pruneOldestVotes(MaxSeenVotes / 10) // Remove 10%
 	}
 
 	// Store this vote for future comparison
@@ -288,6 +301,50 @@ func (p *Pool) pruneExpired() {
 	for key, vote := range p.seenVotes {
 		if p.currentHeight-vote.Height > p.config.MaxAgeBlocks {
 			delete(p.seenVotes, key)
+		}
+	}
+}
+
+// pruneOldestVotes removes the oldest n votes by height.
+// H3: Called when seenVotes exceeds MaxSeenVotes.
+// Caller must hold p.mu.
+func (p *Pool) pruneOldestVotes(n int) {
+	if n <= 0 || len(p.seenVotes) == 0 {
+		return
+	}
+
+	// Find minimum heights and group votes by height
+	heightVotes := make(map[int64][]string)
+	for key, vote := range p.seenVotes {
+		heightVotes[vote.Height] = append(heightVotes[vote.Height], key)
+	}
+
+	// Collect and sort heights
+	heights := make([]int64, 0, len(heightVotes))
+	for h := range heightVotes {
+		heights = append(heights, h)
+	}
+	// Sort ascending (oldest first)
+	for i := 0; i < len(heights)-1; i++ {
+		for j := i + 1; j < len(heights); j++ {
+			if heights[j] < heights[i] {
+				heights[i], heights[j] = heights[j], heights[i]
+			}
+		}
+	}
+
+	// Remove votes starting from oldest heights
+	removed := 0
+	for _, h := range heights {
+		if removed >= n {
+			break
+		}
+		for _, key := range heightVotes[h] {
+			delete(p.seenVotes, key)
+			removed++
+			if removed >= n {
+				break
+			}
 		}
 	}
 }

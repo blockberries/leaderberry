@@ -247,7 +247,8 @@ func (vs *ValidatorSet) WithIncrementedPriority(times int32) (*ValidatorSet, err
 
 // Copy creates a deep copy of the validator set.
 // M1: Deep copies AccountName and PublicKey.Data to avoid shared references.
-// Returns error if the copy operation fails (should never happen for valid sets).
+// M2: Preserves priorities exactly by building set manually (avoids NewValidatorSet
+// which reinitializes priorities if all are zero).
 func (vs *ValidatorSet) Copy() (*ValidatorSet, error) {
 	validators := make([]*NamedValidator, len(vs.Validators))
 	for i, v := range vs.Validators {
@@ -270,7 +271,27 @@ func (vs *ValidatorSet) Copy() (*ValidatorSet, error) {
 		}
 	}
 
-	return NewValidatorSet(validators)
+	// M2: Build the set manually to preserve priorities exactly
+	// (NewValidatorSet would reinitialize priorities if all are zero)
+	newVS := &ValidatorSet{
+		Validators: validators,
+		TotalPower: vs.TotalPower,
+		byName:     make(map[string]*NamedValidator),
+		byIndex:    make(map[uint16]*NamedValidator),
+	}
+
+	for _, v := range validators {
+		name := AccountNameString(v.Name)
+		newVS.byName[name] = v
+		newVS.byIndex[v.Index] = v
+	}
+
+	// Copy proposer reference (point to the new validator in the copy)
+	if vs.Proposer != nil {
+		newVS.Proposer = newVS.byIndex[vs.Proposer.Index]
+	}
+
+	return newVS, nil
 }
 
 // ToData converts to serializable form

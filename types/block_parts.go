@@ -230,14 +230,18 @@ func (ps *PartSet) AddPart(part *BlockPart) error {
 
 	// If complete, assemble data
 	if ps.partsCount == ps.total {
-		ps.assembleData()
+		// L5: Return error if assembly fails (e.g., hash mismatch)
+		if err := ps.assembleData(); err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-// assembleData combines all parts into the full data (caller must hold lock)
-func (ps *PartSet) assembleData() {
+// assembleData combines all parts into the full data (caller must hold lock).
+// L5: Returns error if hash verification fails.
+func (ps *PartSet) assembleData() error {
 	// Calculate total size
 	totalSize := 0
 	for _, part := range ps.parts {
@@ -259,9 +263,12 @@ func (ps *PartSet) assembleData() {
 	computedHash := computeMerkleRoot(partHashes)
 
 	if !HashEqual(computedHash, ps.hash) {
-		// Data doesn't match - clear it
+		// L5: Data doesn't match - clear it and return error
 		ps.data = nil
+		return fmt.Errorf("assembled data hash mismatch: expected %x, got %x", ps.hash.Data, computedHash.Data)
 	}
+
+	return nil
 }
 
 // GetData returns the assembled data, or error if not complete

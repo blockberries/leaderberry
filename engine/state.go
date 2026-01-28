@@ -220,8 +220,12 @@ func (cs *ConsensusState) applyValidatorUpdates(updates []ValidatorUpdate) (*typ
 		return nil, fmt.Errorf("failed to create new validator set: %w", err)
 	}
 
-	// Increment proposer priority for the new round
-	newSet.IncrementProposerPriority(1)
+	// CR1: Increment proposer priority using immutable pattern (not deprecated mutable method)
+	newSet, err = newSet.WithIncrementedPriority(1)
+	if err != nil {
+		// This should never fail for a valid set we just created
+		panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to increment priority on new validator set: %v", err))
+	}
 
 	return newSet, nil
 }

@@ -6,6 +6,107 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-01-28 - Third Refactor
+
+Comprehensive code review fixes addressing critical, high, medium, and low severity issues with a focus on panic vs error philosophy: consensus failures result in PANIC, while errors are reserved for external input validation.
+
+### Critical Severity Fixes (CR1-CR3)
+
+#### CR1: applyValidatorUpdates Uses Deprecated Mutable Method
+- Updated to use `WithIncrementedPriority()` immutable pattern
+- Added panic on priority increment failure (should never happen with valid set)
+
+#### CR2: Lock Ordering Documentation
+- Added comprehensive lock ordering documentation to `peer_state.go`
+- Documents safe patterns: PeerSet.mu → PeerState.mu → VoteBitmap.mu
+- Prevents deadlocks from lock order inversions
+
+#### CR3: WAL Corruption Logging in buildIndex
+- Added logging when corruption detected during index build
+- Partial index is better than none for recovery
+- Warns but continues to maximize recovery potential
+
+### High Severity Fixes (H1-H5)
+
+#### H1: Input Data Copy in Safe Constructors
+- `NewHash`, `NewSignature`, `NewPublicKey` now copy input data
+- Prevents callers from modifying internal state after construction
+- Defensive copy ensures data integrity
+
+#### H2: VoteBitmap Stores Count Instead of Reference
+- Changed `VoteBitmap` to store `numVals int` instead of validator set reference
+- Prevents issues when validator set is updated externally
+- More robust against use-after-update bugs
+
+#### H3: Evidence Pool seenVotes Size Limit
+- Added `MaxSeenVotes = 100000` constant
+- `CheckVote` prunes oldest 10% when limit exceeded
+- Prevents unbounded memory growth in equivocation detection
+
+#### H4: WAL Checkpoint Stops on Segment Errors
+- `Checkpoint` now stops instead of skipping unreadable segments
+- Prevents data loss from deleting segments after an unverified one
+- Logs warning with segment details
+
+#### H5: Deterministic Vote Ordering
+- `GetVotes()` now sorts votes by validator index
+- Ensures consistent iteration order across all nodes
+- Critical for deterministic consensus
+
+### Medium Severity Fixes (M1-M5)
+
+#### M1: Vote Timestamp Validation
+- Added `MaxTimestampDrift = 10 minutes` constant
+- `AddVote` rejects votes with timestamps too far from current time
+- Prevents future-dated votes from affecting evidence expiration
+
+#### M2: ValidatorSet.Copy Preserves Priorities
+- Copy now builds set manually instead of calling `NewValidatorSet`
+- Preserves exact priorities even when all are zero
+- Prevents accidental priority reinitialization
+
+#### M3: MakeCommit Filters Non-Block Votes
+- `MakeCommit()` now only includes votes for the committed block
+- Skips nil votes and votes for other blocks
+- Commits are smaller and only contain contributing votes
+- Sorts signatures for deterministic ordering
+
+#### M4: Timeout Calculation Overflow Protection
+- Added `MaxRoundForTimeout = 10000` constant
+- Clamps round in `calculateDuration`, `Propose`, `Prevote`, `Precommit`
+- Prevents integer overflow with extreme round numbers
+
+#### M5: BlockSyncer Validates Commit Height
+- `ReceiveBlock` now verifies `commit.Height == block.Header.Height`
+- Adds nil checks for block and commit parameters
+- Returns descriptive error on mismatch
+
+### Low Severity Fixes (L2, L4, L5)
+
+#### L2: Increased WAL Decoder Pool Buffer Size
+- Increased `defaultPoolBufSize` from 4KB to 64KB
+- Reduces reallocations for typical proposal/block sizes
+- Matches common message sizes better
+
+#### L4: Peer State Regression Logging
+- Added debug logging when peer height regresses
+- Helps identify network issues or malicious peers
+- Logs peer ID and height change details
+
+#### L5: PartSet assembleData Returns Error
+- `assembleData()` now returns error on hash mismatch
+- `AddPart` propagates assembly errors to caller
+- Better feedback about data integrity failures
+
+### Changed
+- `ValidatorSet.Copy()` no longer calls `NewValidatorSet` internally
+- `VoteSet.MakeCommit()` produces smaller, filtered commits
+- WAL decoder uses larger buffer pool by default
+- All timeout methods clamp round numbers
+
+### Added
+- THIRD_REFACTOR.md documenting comprehensive review findings
+
 ## [0.7.0] - 2026-01-28 - Second Refactor Phase 5
 
 Remaining missing functionality items for production readiness.

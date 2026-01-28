@@ -331,7 +331,17 @@ func (bs *BlockSyncer) ReceiveBlock(block *gen.Block, commit *gen.Commit) error 
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 
+	// M5: Validate inputs
+	if block == nil || commit == nil {
+		return errors.New("nil block or commit")
+	}
+
 	height := block.Header.Height
+
+	// M5: Verify commit height matches block height
+	if commit.Height != height {
+		return fmt.Errorf("commit height %d doesn't match block height %d", commit.Height, height)
+	}
 
 	// Check if we requested this block
 	if _, exists := bs.pendingRequests[height]; !exists {

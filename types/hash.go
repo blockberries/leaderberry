@@ -26,11 +26,15 @@ const PublicKeySize = 32
 
 // NewHash creates a Hash from bytes, returning error if invalid.
 // Use for untrusted input (network, files).
+// H1: Copies input data to prevent caller from modifying internal state.
 func NewHash(data []byte) (Hash, error) {
 	if len(data) != HashSize {
 		return Hash{}, fmt.Errorf("hash must be %d bytes, got %d", HashSize, len(data))
 	}
-	return Hash{Data: data}, nil
+	// H1: Copy to prevent caller from modifying our internal data
+	copied := make([]byte, HashSize)
+	copy(copied, data)
+	return Hash{Data: copied}, nil
 }
 
 // MustNewHash creates a Hash, panicking if invalid.
@@ -79,11 +83,15 @@ func HashString(h Hash) string {
 
 // NewSignature creates a Signature from bytes, returning error if invalid.
 // Use for untrusted input (network, files).
+// H1: Copies input data to prevent caller from modifying internal state.
 func NewSignature(data []byte) (Signature, error) {
 	if len(data) != SignatureSize {
 		return Signature{}, fmt.Errorf("signature must be %d bytes, got %d", SignatureSize, len(data))
 	}
-	return Signature{Data: data}, nil
+	// H1: Copy to prevent caller from modifying our internal data
+	copied := make([]byte, SignatureSize)
+	copy(copied, data)
+	return Signature{Data: copied}, nil
 }
 
 // MustNewSignature creates a Signature, panicking if invalid.
@@ -98,11 +106,15 @@ func MustNewSignature(data []byte) Signature {
 
 // NewPublicKey creates a PublicKey from bytes, returning error if invalid.
 // Use for untrusted input (network, files).
+// H1: Copies input data to prevent caller from modifying internal state.
 func NewPublicKey(data []byte) (PublicKey, error) {
 	if len(data) != PublicKeySize {
 		return PublicKey{}, fmt.Errorf("public key must be %d bytes, got %d", PublicKeySize, len(data))
 	}
-	return PublicKey{Data: data}, nil
+	// H1: Copy to prevent caller from modifying our internal data
+	copied := make([]byte, PublicKeySize)
+	copy(copied, data)
+	return PublicKey{Data: copied}, nil
 }
 
 // MustNewPublicKey creates a PublicKey, panicking if invalid.

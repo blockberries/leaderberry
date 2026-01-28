@@ -2,11 +2,17 @@ package engine
 
 import (
 	"encoding/hex"
+	"fmt"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/blockberries/leaderberry/types"
 	gen "github.com/blockberries/leaderberry/types/generated"
 )
+
+// M1: Maximum allowed clock drift for vote timestamps
+const MaxTimestampDrift = 10 * time.Minute
 
 // VoteSet tracks votes for a single height/round/type combination
 type VoteSet struct {
@@ -60,6 +66,16 @@ func (vs *VoteSet) AddVote(vote *gen.Vote) (bool, error) {
 	// Validate vote matches this set
 	if vote.Height != vs.height || vote.Round != vs.round || vote.Type != vs.voteType {
 		return false, ErrInvalidVote
+	}
+
+	// M1: Validate timestamp is reasonable
+	voteTime := time.Unix(0, vote.Timestamp)
+	now := time.Now()
+	if voteTime.After(now.Add(MaxTimestampDrift)) {
+		return false, fmt.Errorf("%w: timestamp too far in future", ErrInvalidVote)
+	}
+	if voteTime.Before(now.Add(-MaxTimestampDrift)) {
+		return false, fmt.Errorf("%w: timestamp too far in past", ErrInvalidVote)
 	}
 
 	// Check validator exists
@@ -164,7 +180,8 @@ func (vs *VoteSet) VotingPower() int64 {
 	return vs.sum
 }
 
-// GetVotes returns all votes
+// GetVotes returns all votes sorted by validator index for deterministic ordering.
+// H5: Map iteration is non-deterministic; sorting ensures consistent results.
 func (vs *VoteSet) GetVotes() []*gen.Vote {
 	vs.mu.RLock()
 	defer vs.mu.RUnlock()
@@ -173,6 +190,12 @@ func (vs *VoteSet) GetVotes() []*gen.Vote {
 	for _, v := range vs.votes {
 		votes = append(votes, v)
 	}
+
+	// H5: Sort by validator index for deterministic ordering
+	sort.Slice(votes, func(i, j int) bool {
+		return votes[i].ValidatorIndex < votes[j].ValidatorIndex
+	})
+
 	return votes
 }
 
@@ -230,6 +253,7 @@ func (vs *VoteSet) HasPeerMaj23() bool {
 
 // MakeCommit creates a Commit from 2/3+ precommits.
 // Returns nil if there's no 2/3+ majority for a non-nil block.
+// M3: Only includes votes for the committed block, not nil votes or votes for other blocks.
 func (vs *VoteSet) MakeCommit() *gen.Commit {
 	vs.mu.RLock()
 	defer vs.mu.RUnlock()
@@ -243,8 +267,19 @@ func (vs *VoteSet) MakeCommit() *gen.Commit {
 		return nil
 	}
 
-	sigs := make([]gen.CommitSig, 0, len(vs.votes))
+	// M3: Only include votes for the committed block
+	blockHash := vs.maj23.blockHash
+	sigs := make([]gen.CommitSig, 0)
+
 	for _, vote := range vs.votes {
+		// Skip nil votes and votes for other blocks
+		if vote.BlockHash == nil || types.IsHashEmpty(vote.BlockHash) {
+			continue
+		}
+		if !types.HashEqual(*vote.BlockHash, *blockHash) {
+			continue
+		}
+
 		sig := gen.CommitSig{
 			ValidatorIndex: vote.ValidatorIndex,
 			Signature:      vote.Signature,
@@ -254,10 +289,15 @@ func (vs *VoteSet) MakeCommit() *gen.Commit {
 		sigs = append(sigs, sig)
 	}
 
+	// M3: Sort for deterministic ordering
+	sort.Slice(sigs, func(i, j int) bool {
+		return sigs[i].ValidatorIndex < sigs[j].ValidatorIndex
+	})
+
 	return &gen.Commit{
 		Height:     vs.height,
 		Round:      vs.round,
-		BlockHash:  *vs.maj23.blockHash,
+		BlockHash:  *blockHash,
 		Signatures: sigs,
 	}
 }

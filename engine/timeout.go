@@ -12,6 +12,10 @@ import (
 const (
 	// timeoutChannelSize is the buffer size for timeout channels
 	timeoutChannelSize = 100
+
+	// M4: MaxRoundForTimeout prevents overflow in timeout calculations.
+	// Beyond this many rounds, timeout stops growing (capped at ~83 minutes with default deltas).
+	MaxRoundForTimeout = 10000
 )
 
 // RoundStep type aliases
@@ -183,13 +187,19 @@ func (tt *TimeoutTicker) run() {
 }
 
 func (tt *TimeoutTicker) calculateDuration(ti TimeoutInfo) time.Duration {
+	// M4: Clamp round to prevent overflow in duration calculation
+	round := ti.Round
+	if round > MaxRoundForTimeout {
+		round = MaxRoundForTimeout
+	}
+
 	switch ti.Step {
 	case RoundStepPropose:
-		return tt.config.Propose + time.Duration(ti.Round)*tt.config.ProposeDelta
+		return tt.config.Propose + time.Duration(round)*tt.config.ProposeDelta
 	case RoundStepPrevoteWait:
-		return tt.config.Prevote + time.Duration(ti.Round)*tt.config.PrevoteDelta
+		return tt.config.Prevote + time.Duration(round)*tt.config.PrevoteDelta
 	case RoundStepPrecommitWait:
-		return tt.config.Precommit + time.Duration(ti.Round)*tt.config.PrecommitDelta
+		return tt.config.Precommit + time.Duration(round)*tt.config.PrecommitDelta
 	case RoundStepCommit:
 		return tt.config.Commit
 	default:
@@ -198,17 +208,29 @@ func (tt *TimeoutTicker) calculateDuration(ti TimeoutInfo) time.Duration {
 }
 
 // Propose returns the propose timeout for a round
+// M4: Clamps round to prevent overflow
 func (tt *TimeoutTicker) Propose(round int32) time.Duration {
+	if round > MaxRoundForTimeout {
+		round = MaxRoundForTimeout
+	}
 	return tt.config.Propose + time.Duration(round)*tt.config.ProposeDelta
 }
 
 // Prevote returns the prevote wait timeout for a round
+// M4: Clamps round to prevent overflow
 func (tt *TimeoutTicker) Prevote(round int32) time.Duration {
+	if round > MaxRoundForTimeout {
+		round = MaxRoundForTimeout
+	}
 	return tt.config.Prevote + time.Duration(round)*tt.config.PrevoteDelta
 }
 
 // Precommit returns the precommit wait timeout for a round
+// M4: Clamps round to prevent overflow
 func (tt *TimeoutTicker) Precommit(round int32) time.Duration {
+	if round > MaxRoundForTimeout {
+		round = MaxRoundForTimeout
+	}
 	return tt.config.Precommit + time.Duration(round)*tt.config.PrecommitDelta
 }
 

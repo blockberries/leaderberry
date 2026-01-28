@@ -1,12 +1,32 @@
 package engine
 
 import (
+	"log"
 	"sync"
 	"time"
 
 	"github.com/blockberries/leaderberry/types"
 	gen "github.com/blockberries/leaderberry/types/generated"
 )
+
+// CR2: Lock Ordering
+//
+// To prevent deadlocks, locks in this package MUST be acquired in the following order:
+//
+//   1. PeerSet.mu       - Protects the set of peers
+//   2. PeerState.mu     - Protects individual peer state
+//   3. VoteBitmap.mu    - Protects vote tracking bitmaps
+//
+// When acquiring multiple locks, always acquire them in ascending order (1 → 2 → 3).
+// Never acquire a lower-numbered lock while holding a higher-numbered lock.
+//
+// Safe patterns:
+//   - PeerSet.mu → PeerState.mu (e.g., UpdateValidatorSet)
+//   - PeerState.mu → VoteBitmap.mu (e.g., SetHasVote)
+//
+// Unsafe patterns (will deadlock):
+//   - PeerState.mu → PeerSet.mu (NEVER DO THIS)
+//   - VoteBitmap.mu → PeerState.mu (NEVER DO THIS)
 
 // PeerRoundState tracks a peer's consensus state for a specific round
 type PeerRoundState struct {
@@ -22,12 +42,14 @@ type PeerRoundState struct {
 	CatchingUp      bool        // Peer is catching up (behind on height)
 }
 
-// VoteBitmap efficiently tracks which validator indices have voted
+// VoteBitmap efficiently tracks which validator indices have voted.
+// H2: Stores numVals instead of valSet reference to avoid issues when
+// the validator set is updated externally.
 type VoteBitmap struct {
-	mu     sync.RWMutex
-	bits   []uint64
-	count  int
-	valSet *types.ValidatorSet
+	mu      sync.RWMutex
+	bits    []uint64
+	count   int
+	numVals int // H2: Store size, not reference
 }
 
 // NewVoteBitmap creates a bitmap for tracking validator votes
@@ -36,8 +58,8 @@ func NewVoteBitmap(valSet *types.ValidatorSet) *VoteBitmap {
 	// Need (numVals + 63) / 64 uint64s to store all bits
 	numWords := (numVals + 63) / 64
 	return &VoteBitmap{
-		bits:   make([]uint64, numWords),
-		valSet: valSet,
+		bits:    make([]uint64, numWords),
+		numVals: numVals,
 	}
 }
 
@@ -46,7 +68,7 @@ func (vb *VoteBitmap) Set(index uint16) {
 	vb.mu.Lock()
 	defer vb.mu.Unlock()
 
-	if int(index) >= vb.valSet.Size() {
+	if int(index) >= vb.numVals {
 		return
 	}
 
@@ -65,7 +87,7 @@ func (vb *VoteBitmap) Has(index uint16) bool {
 	vb.mu.RLock()
 	defer vb.mu.RUnlock()
 
-	if int(index) >= vb.valSet.Size() {
+	if int(index) >= vb.numVals {
 		return false
 	}
 
@@ -86,8 +108,8 @@ func (vb *VoteBitmap) Missing() []uint16 {
 	vb.mu.RLock()
 	defer vb.mu.RUnlock()
 
-	missing := make([]uint16, 0, vb.valSet.Size()-vb.count)
-	for i := 0; i < vb.valSet.Size(); i++ {
+	missing := make([]uint16, 0, vb.numVals-vb.count)
+	for i := 0; i < vb.numVals; i++ {
 		if !vb.hasUnlocked(uint16(i)) {
 			missing = append(missing, uint16(i))
 		}
@@ -111,9 +133,9 @@ func (vb *VoteBitmap) Copy() *VoteBitmap {
 	copy(bits, vb.bits)
 
 	return &VoteBitmap{
-		bits:   bits,
-		count:  vb.count,
-		valSet: vb.valSet,
+		bits:    bits,
+		count:   vb.count,
+		numVals: vb.numVals,
 	}
 }
 
@@ -204,7 +226,9 @@ func (ps *PeerState) ApplyNewRoundStep(height int64, round int32, step RoundStep
 	defer ps.mu.Unlock()
 
 	if height < ps.prs.Height {
-		return // Peer regressed - ignore
+		// L4: Log regression for debugging (could indicate network issues or malicious peer)
+		log.Printf("[DEBUG] peer %s: ignoring height regression %d -> %d", ps.peerID, ps.prs.Height, height)
+		return
 	}
 
 	// If height changed, reset everything
@@ -427,14 +451,16 @@ func (ps *PeerSet) PeersNeedingProposal(height int64, round int32) []*PeerState 
 	return peers
 }
 
-// UpdateValidatorSet updates the validator set for all peers
+// UpdateValidatorSet updates the validator set for all peers.
+// CR2: Follows lock ordering (PeerSet.mu → PeerState.mu).
+// Caller must NOT hold any PeerState locks.
 func (ps *PeerSet) UpdateValidatorSet(valSet *types.ValidatorSet) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 
 	ps.valSet = valSet
 	for _, p := range ps.peers {
-		p.UpdateValidatorSet(valSet)
+		p.UpdateValidatorSet(valSet) // Safe: PeerSet.mu held, then acquires PeerState.mu
 	}
 }
 

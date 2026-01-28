@@ -21,8 +21,9 @@ const (
 	defaultBufSize    = 64 * 1024        // 64KB buffer
 	defaultMaxSegSize = 64 * 1024 * 1024 // 64MB default segment size
 
-	// L2: Default pool buffer size for decoder
-	defaultPoolBufSize = 4096
+	// L2: Default pool buffer size for decoder.
+	// Set to 64KB to match typical proposal/block sizes and reduce reallocations.
+	defaultPoolBufSize = 65536
 )
 
 // L2: Byte pool to reduce GC pressure in WAL decoder
@@ -116,7 +117,8 @@ func (w *FileWAL) Start() error {
 	return nil
 }
 
-// buildIndex scans all segments and builds the height -> segment index
+// buildIndex scans all segments and builds the height -> segment index.
+// CR3: Logs warnings on corruption instead of silently ignoring.
 func (w *FileWAL) buildIndex() error {
 	for idx := w.group.MinIndex; idx <= w.group.MaxIndex; idx++ {
 		path := w.segmentPath(idx)
@@ -135,7 +137,9 @@ func (w *FileWAL) buildIndex() error {
 				break
 			}
 			if err != nil {
-				// Corrupted segment - stop indexing this segment
+				// CR3: Log corruption but continue - partial index is better than none.
+				// WAL is append-only, so corruption at the end is often recoverable.
+				log.Printf("[WARN] wal: corruption detected in segment %d during index build: %v", idx, err)
 				break
 			}
 
@@ -463,8 +467,10 @@ func (w *FileWAL) Checkpoint(checkpointHeight int64) error {
 	for idx := w.group.MinIndex; idx < w.group.MaxIndex; idx++ { // Never delete current segment
 		canDelete, err := w.canDeleteSegment(idx, checkpointHeight)
 		if err != nil {
-			// If we can't read the segment, skip it
-			continue
+			// H4: Stop on segment error - we can't safely delete later segments
+			// if we don't know the contents of this one (could lose WAL data)
+			log.Printf("[WARN] wal: checkpoint stopping - cannot verify segment %d: %v", idx, err)
+			break
 		}
 		if canDelete {
 			segmentsToDelete = append(segmentsToDelete, idx)
