@@ -173,8 +173,11 @@ func (vs *ValidatorSet) Size() int {
 	return len(vs.Validators)
 }
 
-// TwoThirdsMajority returns the voting power needed for 2/3+ majority
-// H5: Overflow-safe calculation - avoids TotalPower * 2 which could overflow
+// TwoThirdsMajority returns the voting power needed for 2/3+ majority.
+// The calculation avoids multiplying TotalPower by 2 (which could overflow
+// if TotalPower > MaxInt64/2) by computing 2/3 as (1/3 + 1/3 + adjustment).
+// L2: Note that third + third can still overflow if third > MaxInt64/2, but
+// this is prevented by the MaxTotalVotingPower limit.
 func (vs *ValidatorSet) TwoThirdsMajority() int64 {
 	// Avoid overflow by dividing first, then adjusting
 	// 2/3 majority means > 2/3, so we need (2*total/3) + 1

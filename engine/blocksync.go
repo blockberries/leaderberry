@@ -371,16 +371,26 @@ func (bs *BlockSyncer) ReceiveBlock(block *gen.Block, commit *gen.Commit) error 
 		bs.currentHeight = height
 
 		// Notify callback
+		// H5: Track callback goroutines with WaitGroup
 		if bs.onBlockCommitted != nil {
-			go bs.onBlockCommitted(block, commit)
+			bs.wg.Add(1)
+			go func() {
+				defer bs.wg.Done()
+				bs.onBlockCommitted(block, commit)
+			}()
 		}
 
 		// Check if caught up
 		if bs.currentHeight >= bs.targetHeight {
 			bs.state = BlockSyncStateCaughtUp
 			log.Printf("[INFO] blocksync: caught up at height %d", bs.currentHeight)
+			// H5: Track callback goroutines with WaitGroup
 			if bs.onCaughtUp != nil {
-				go bs.onCaughtUp()
+				bs.wg.Add(1)
+				go func() {
+					defer bs.wg.Done()
+					bs.onCaughtUp()
+				}()
 			}
 		}
 	}

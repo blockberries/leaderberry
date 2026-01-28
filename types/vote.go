@@ -31,7 +31,7 @@ var (
 
 // VoteSignBytes returns the bytes to sign for a vote
 func VoteSignBytes(chainID string, v *Vote) []byte {
-	// Create a canonical vote for signing (without signature)
+	// M3: Create canonical vote with explicit zero signature for deterministic signing
 	canonical := &Vote{
 		Type:           v.Type,
 		Height:         v.Height,
@@ -40,7 +40,7 @@ func VoteSignBytes(chainID string, v *Vote) []byte {
 		Timestamp:      v.Timestamp,
 		Validator:      v.Validator,
 		ValidatorIndex: v.ValidatorIndex,
-		// Signature is nil for signing
+		Signature:      Signature{Data: nil}, // M3: Explicit zero for signing
 	}
 
 	// Prepend chain ID
@@ -121,6 +121,12 @@ func VerifyCommit(
 	seenValidators := make(map[uint16]bool)
 
 	for _, sig := range commit.Signatures {
+		// H3: Validate signature structure before processing
+		if sig.Signature.Data == nil || len(sig.Signature.Data) == 0 {
+			// Empty signature - skip but don't count
+			continue
+		}
+
 		// Check for nil/absent votes (allowed but don't count toward power)
 		if sig.BlockHash == nil || IsHashEmpty(sig.BlockHash) {
 			continue

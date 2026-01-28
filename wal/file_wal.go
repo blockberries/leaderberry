@@ -302,17 +302,39 @@ func (w *FileWAL) rotate() error {
 		return err
 	}
 
-	// Close current file
-	if err := w.file.Close(); err != nil {
-		return err
+	// CR5: Open new segment BEFORE closing old one to ensure atomic transition
+	newIndex := w.segmentIndex + 1
+	newPath := w.segmentPath(newIndex)
+	newFile, err := os.OpenFile(newPath, os.O_RDWR|os.O_CREATE|os.O_APPEND, walFilePerm)
+	if err != nil {
+		// Failed to open new segment - keep using current one
+		return fmt.Errorf("failed to open new WAL segment %d: %w", newIndex, err)
 	}
 
-	// Increment segment index
-	w.segmentIndex++
-	w.group.MaxIndex = w.segmentIndex
+	// Get file size for the new segment
+	info, err := newFile.Stat()
+	if err != nil {
+		newFile.Close()
+		return fmt.Errorf("failed to stat new WAL segment: %w", err)
+	}
 
-	// Open new segment
-	return w.openSegment(w.segmentIndex)
+	// New segment opened successfully - now safe to close old one
+	if err := w.file.Close(); err != nil {
+		// Close old file failed, but new file is open
+		// Close new file and return error to keep using current segment
+		newFile.Close()
+		return fmt.Errorf("failed to close old WAL segment: %w", err)
+	}
+
+	// Update state atomically
+	w.file = newFile
+	w.buf = bufio.NewWriterSize(newFile, defaultBufSize)
+	w.enc = newEncoder(w.buf)
+	w.segmentIndex = newIndex
+	w.segmentSize = info.Size()
+	w.group.MaxIndex = newIndex
+
+	return nil
 }
 
 // WriteSync writes a message and syncs to disk
@@ -376,8 +398,8 @@ func (w *FileWAL) SearchForEndHeight(height int64) (Reader, bool, error) {
 		return nil, false, ErrWALClosed
 	}
 
-	// Flush any pending writes
-	if err := w.buf.Flush(); err != nil {
+	// L6: Sync to ensure all data is on disk before searching
+	if err := w.flushAndSync(); err != nil {
 		return nil, false, err
 	}
 

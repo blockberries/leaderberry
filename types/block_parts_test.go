@@ -151,9 +151,10 @@ func TestPartSetInvalidIndex(t *testing.T) {
 
 	// Create part with invalid index
 	invalidPart := &BlockPart{
-		Index: 999,
-		Bytes: []byte("test"),
-		Proof: srcPS.Header().Hash,
+		Index:     999,
+		Bytes:     []byte("test"),
+		ProofPath: []Hash{},
+		ProofRoot: srcPS.Header().Hash,
 	}
 
 	err := dstPS.AddPart(invalidPart)
@@ -167,11 +168,12 @@ func TestPartSetInvalidProof(t *testing.T) {
 	srcPS, _ := NewPartSetFromData(data)
 	dstPS, _ := NewPartSetFromHeader(srcPS.Header())
 
-	// Create part with invalid proof
+	// Create part with invalid proof (wrong proof path)
 	invalidPart := &BlockPart{
-		Index: 0,
-		Bytes: srcPS.GetPart(0).Bytes,
-		Proof: HashBytes([]byte("wrong")),
+		Index:     0,
+		Bytes:     srcPS.GetPart(0).Bytes,
+		ProofPath: []Hash{HashBytes([]byte("wrong"))}, // Wrong sibling
+		ProofRoot: srcPS.Header().Hash,
 	}
 
 	err := dstPS.AddPart(invalidPart)

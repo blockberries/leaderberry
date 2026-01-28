@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/blockberries/leaderberry/privval"
@@ -186,7 +187,19 @@ func (e *Engine) GetState() (height int64, round int32, step RoundStep, err erro
 func (e *Engine) GetValidatorSet() *types.ValidatorSet {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return e.validatorSet
+
+	if e.validatorSet == nil {
+		return nil
+	}
+
+	// H1: Return copy to prevent caller from modifying internal state
+	vsCopy, err := e.validatorSet.Copy()
+	if err != nil {
+		// Should never fail for valid set
+		log.Printf("[ERROR] engine: failed to copy validator set: %v", err)
+		return nil
+	}
+	return vsCopy
 }
 
 // UpdateValidatorSet updates the validator set (typically after a block is committed)

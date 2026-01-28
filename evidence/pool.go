@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -34,6 +36,13 @@ const (
 	// MaxSeenVotes limits memory usage for equivocation detection.
 	// With 100 validators, 2 vote types per round, this allows ~500 rounds of history.
 	MaxSeenVotes = 100000
+
+	// CR6: Protect votes within this many heights of current to prevent
+	// losing evidence that hasn't been committed yet.
+	VoteProtectionWindow = 1000
+
+	// M8: Maximum pending evidence to prevent unbounded memory growth
+	MaxPendingEvidence = 10000
 )
 
 // Config holds evidence pool configuration
@@ -131,8 +140,9 @@ func (p *Pool) CheckVote(vote *gen.Vote, valSet *types.ValidatorSet) (*gen.Dupli
 		p.pruneOldestVotes(MaxSeenVotes / 10) // Remove 10%
 	}
 
-	// Store this vote for future comparison
-	p.seenVotes[key] = vote
+	// CR4: Copy vote before storing to prevent caller from modifying it
+	voteCopy := *vote
+	p.seenVotes[key] = &voteCopy
 	return nil, nil
 }
 
@@ -140,6 +150,11 @@ func (p *Pool) CheckVote(vote *gen.Vote, valSet *types.ValidatorSet) (*gen.Dupli
 func (p *Pool) AddEvidence(ev *gen.Evidence) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	// M8: Check pending evidence limit
+	if len(p.pending) >= MaxPendingEvidence {
+		return errors.New("pending evidence pool full")
+	}
 
 	// Check for duplicate
 	key := evidenceKey(ev)
@@ -307,16 +322,33 @@ func (p *Pool) pruneExpired() {
 
 // pruneOldestVotes removes the oldest n votes by height.
 // H3: Called when seenVotes exceeds MaxSeenVotes.
+// CR6: Protects votes within VoteProtectionWindow of current height.
 // Caller must hold p.mu.
 func (p *Pool) pruneOldestVotes(n int) {
 	if n <= 0 || len(p.seenVotes) == 0 {
 		return
 	}
 
-	// Find minimum heights and group votes by height
+	// CR6: Calculate protection threshold
+	protectedHeight := p.currentHeight - VoteProtectionWindow
+	if protectedHeight < 0 {
+		protectedHeight = 0
+	}
+
+	// Find minimum heights and group votes by height, excluding protected heights
 	heightVotes := make(map[int64][]string)
 	for key, vote := range p.seenVotes {
+		// CR6: Don't prune votes in protection window
+		if vote.Height >= protectedHeight {
+			continue
+		}
 		heightVotes[vote.Height] = append(heightVotes[vote.Height], key)
+	}
+
+	if len(heightVotes) == 0 {
+		// All votes are in protection window - can't prune
+		log.Printf("[WARN] evidence: cannot prune votes - all %d votes in protection window", len(p.seenVotes))
+		return
 	}
 
 	// Collect and sort heights
@@ -324,14 +356,10 @@ func (p *Pool) pruneOldestVotes(n int) {
 	for h := range heightVotes {
 		heights = append(heights, h)
 	}
-	// Sort ascending (oldest first)
-	for i := 0; i < len(heights)-1; i++ {
-		for j := i + 1; j < len(heights); j++ {
-			if heights[j] < heights[i] {
-				heights[i], heights[j] = heights[j], heights[i]
-			}
-		}
-	}
+	// CR2: Use stdlib sort instead of broken bubble sort
+	sort.Slice(heights, func(i, j int) bool {
+		return heights[i] < heights[j]
+	})
 
 	// Remove votes starting from oldest heights
 	removed := 0

@@ -6,6 +6,128 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-01-28 - Fourth Refactor
+
+Comprehensive code review fixes addressing critical, high, medium, and low severity issues identified during line-by-line audit of the entire codebase.
+
+### Critical Severity Fixes (CR1-CR6)
+
+#### CR1: Commit Timeout Handler Logging
+- Added warning log when commit timeout fires unexpectedly
+- Helps diagnose cases where block wasn't applied in time
+- Recovery attempt still proceeds
+
+#### CR2: Broken Bubble Sort Replaced
+- Replaced incorrect bubble sort in `pruneOldestVotes` with `sort.Slice`
+- Previous implementation could incorrectly order heights
+- Fixes potential evidence loss during pruning
+
+#### CR3: Proper Merkle Proof Verification
+- `BlockPart` now includes `ProofPath` (sibling hashes) and `ProofRoot`
+- Added `verifyMerkleProof()` function to verify inclusion proofs
+- `buildMerkleTreeWithProofs()` generates proper proof paths
+- Each part can be independently verified against the root
+
+#### CR4: Vote Copy in Evidence Pool
+- `CheckVote` now copies vote before storing in `seenVotes`
+- Prevents caller from modifying stored evidence data
+- Defensive copy ensures evidence integrity
+
+#### CR5: WAL Rotation Race Condition Fix
+- `rotate()` now opens new segment BEFORE closing old one
+- If new segment fails to open, continues using current segment
+- Prevents inconsistent state if file operations fail
+
+#### CR6: Vote Protection Window in Pruning
+- Added `VoteProtectionWindow = 1000` constant
+- `pruneOldestVotes` skips votes within protection window of current height
+- Prevents losing recent evidence that hasn't been committed
+
+### High Severity Fixes (H1-H6)
+
+#### H1: GetValidatorSet Returns Copy
+- Both `Engine.GetValidatorSet()` and `ConsensusState.GetValidatorSet()` now return copies
+- Prevents callers from modifying internal consensus state
+- Uses `ValidatorSet.Copy()` method
+
+#### H2: Nil Proposer Check
+- Added nil check before accessing `Proposer` fields in `enterProposeLocked` and `handleProposalLocked`
+- Logs warning if no proposer is set
+- Prevents nil pointer dereference
+
+#### H3: VerifyCommit Signature Validation
+- Added check for nil/empty signature data before processing commit signatures
+- Skips signatures with no data without counting toward power
+- More robust handling of malformed commits
+
+#### H5: BlockSyncer Callback WaitGroup
+- `onBlockCommitted` and `onCaughtUp` callbacks now tracked with WaitGroup
+- `Stop()` waits for all callbacks to complete
+- Prevents goroutine leaks on shutdown
+
+### Medium Severity Fixes (M1-M8)
+
+#### M1: VerifyAuthorization Cycle Detection
+- Fixed cycle detection in authorization verification
+- Creates copy of visited map for each branch
+- Prevents false cycle detection in diamond delegation patterns
+
+#### M2: PartSetBitmap Bounds Check
+- `PartSetBitmapFromBytes` validates total against `MaxBlockParts`
+- Returns error if total exceeds limit
+- Prevents DoS via oversized bitmap
+
+#### M3: Explicit Zero Signature in VoteSignBytes
+- `VoteSignBytes` explicitly sets `Signature{Data: nil}` in canonical vote
+- Ensures deterministic serialization for signing
+- Makes zero value explicit
+
+#### M6: Proposal Signing Failure Logging
+- Changed log level from WARN to ERROR for signing failures
+- Includes height and round in error message
+- More visible for monitoring
+
+#### M7: GetAddress Uses Hash
+- `FilePV.GetAddress()` now derives address by hashing public key
+- Returns first 20 bytes of SHA256 hash
+- Standard practice matching Ethereum/Tendermint
+
+#### M8: Pending Evidence Limit
+- Added `MaxPendingEvidence = 10000` constant
+- `AddEvidence` returns error when pending pool is full
+- Prevents unbounded memory growth
+
+### Low Severity Fixes (L2, L4, L5, L6)
+
+#### L2: TwoThirdsMajority Comment Improvement
+- Updated comment to explain overflow-safe calculation
+- Documents that third+third overflow is prevented by MaxTotalVotingPower
+
+#### L4: Equivocator Vote Comment
+- Added comment explaining why equivocating votes still count toward quorum
+- Documents that slashing happens via evidence pool, not vote exclusion
+
+#### L5: Temp File Cleanup in PrivVal
+- Added `os.Remove(tmpPath)` in error paths during key file save
+- Prevents orphaned temp files on write failures
+
+#### L6: WAL Sync Before Search
+- `SearchForEndHeight` now calls `flushAndSync()` instead of just `Flush()`
+- Ensures all data is persisted to disk before searching
+- Prevents reading stale data
+
+### Files Modified
+- `engine/state.go` - CR1, H2, M6, L4
+- `engine/engine.go` - H1
+- `engine/blocksync.go` - H5
+- `evidence/pool.go` - CR2, CR4, CR6, M8
+- `types/block_parts.go` - CR3, M2
+- `types/vote.go` - H3, M3
+- `types/account.go` - M1
+- `types/validator.go` - L2
+- `wal/file_wal.go` - CR5, L6
+- `privval/file_pv.go` - M7, L5
+
 ## [0.8.0] - 2026-01-28 - Third Refactor
 
 Comprehensive code review fixes addressing critical, high, medium, and low severity issues with a focus on panic vs error philosophy: consensus failures result in PANIC, while errors are reserved for external input validation.

@@ -28,11 +28,12 @@ var (
 	ErrTooManyParts        = errors.New("too many parts")
 )
 
-// BlockPart represents a single part of a block
+// BlockPart represents a single part of a block with Merkle proof
 type BlockPart struct {
-	Index uint16 // Part index
-	Bytes []byte // Part data
-	Proof Hash   // Merkle proof (hash of all part hashes)
+	Index     uint16 // Part index
+	Bytes     []byte // Part data
+	ProofPath []Hash // CR3: Sibling hashes for Merkle proof verification
+	ProofRoot Hash   // CR3: The expected Merkle root
 }
 
 // BlockPartSetHeader describes a set of block parts
@@ -76,9 +77,9 @@ func NewPartSetFromData(data []byte) (*PartSet, error) {
 	}
 
 	parts := make([]*BlockPart, total)
-	partHashes := make([][]byte, total)
+	leafHashes := make([]Hash, total)
 
-	// Split into parts
+	// Split into parts and compute leaf hashes
 	for i := 0; i < total; i++ {
 		start := i * BlockPartSize
 		end := start + BlockPartSize
@@ -91,7 +92,7 @@ func NewPartSetFromData(data []byte) (*PartSet, error) {
 
 		// Hash this part
 		h := sha256.Sum256(partData)
-		partHashes[i] = h[:]
+		leafHashes[i] = MustNewHash(h[:])
 
 		parts[i] = &BlockPart{
 			Index: uint16(i),
@@ -99,12 +100,13 @@ func NewPartSetFromData(data []byte) (*PartSet, error) {
 		}
 	}
 
-	// Compute merkle root of part hashes
-	rootHash := computeMerkleRoot(partHashes)
+	// CR3: Build Merkle tree and extract proofs for each part
+	rootHash, proofPaths := buildMerkleTreeWithProofs(leafHashes)
 
-	// Set proof on each part (for simplicity, we use the root hash as proof)
-	for _, part := range parts {
-		part.Proof = rootHash
+	// Attach proofs to parts
+	for i, part := range parts {
+		part.ProofPath = proofPaths[i]
+		part.ProofRoot = rootHash
 	}
 
 	// Create bitmap (all parts present)
@@ -216,8 +218,9 @@ func (ps *PartSet) AddPart(part *BlockPart) error {
 		return ErrPartSetAlreadyHas
 	}
 
-	// Verify proof (simplified: just check the merkle root matches)
-	if !HashEqual(part.Proof, ps.hash) {
+	// CR3: Verify Merkle proof - compute part hash and verify proof path
+	partHash := sha256.Sum256(part.Bytes)
+	if !verifyMerkleProof(MustNewHash(partHash[:]), part.Index, part.ProofPath, ps.hash) {
 		return ErrPartSetInvalidProof
 	}
 
@@ -335,6 +338,120 @@ func computeMerkleRoot(hashes [][]byte) Hash {
 	return MustNewHash(hashes[0])
 }
 
+// CR3: buildMerkleTreeWithProofs builds a Merkle tree and returns the root along
+// with proof paths for each leaf. A proof path contains the sibling hashes needed
+// to reconstruct the root from a given leaf.
+func buildMerkleTreeWithProofs(leafHashes []Hash) (Hash, [][]Hash) {
+	n := len(leafHashes)
+	if n == 0 {
+		return HashEmpty(), nil
+	}
+	if n == 1 {
+		return leafHashes[0], [][]Hash{{}}
+	}
+
+	// Initialize proofs for each leaf
+	proofs := make([][]Hash, n)
+	for i := range proofs {
+		proofs[i] = make([]Hash, 0)
+	}
+
+	// Convert to [][]byte for processing
+	currentLevel := make([][]byte, n)
+	for i, h := range leafHashes {
+		currentLevel[i] = make([]byte, len(h.Data))
+		copy(currentLevel[i], h.Data)
+	}
+
+	// Track which original indices correspond to current level positions
+	indices := make([][]int, n)
+	for i := range indices {
+		indices[i] = []int{i}
+	}
+
+	// Build tree level by level
+	for len(currentLevel) > 1 {
+		nextLevel := make([][]byte, 0, (len(currentLevel)+1)/2)
+		nextIndices := make([][]int, 0, (len(currentLevel)+1)/2)
+
+		for i := 0; i < len(currentLevel); i += 2 {
+			var left, right []byte
+			var leftIndices, rightIndices []int
+
+			left = currentLevel[i]
+			leftIndices = indices[i]
+
+			if i+1 < len(currentLevel) {
+				right = currentLevel[i+1]
+				rightIndices = indices[i+1]
+			} else {
+				// Odd one out - pair with itself
+				right = currentLevel[i]
+				rightIndices = nil // No additional indices
+			}
+
+			// Add sibling to proofs for all leaves in this subtree
+			rightHash := MustNewHash(right)
+			leftHash := MustNewHash(left)
+
+			for _, idx := range leftIndices {
+				proofs[idx] = append(proofs[idx], rightHash)
+			}
+			if rightIndices != nil {
+				for _, idx := range rightIndices {
+					proofs[idx] = append(proofs[idx], leftHash)
+				}
+			}
+
+			// Compute parent hash
+			combined := append(left, right...)
+			h := sha256.Sum256(combined)
+			nextLevel = append(nextLevel, h[:])
+
+			// Merge indices
+			merged := make([]int, 0, len(leftIndices)+len(rightIndices))
+			merged = append(merged, leftIndices...)
+			if rightIndices != nil {
+				merged = append(merged, rightIndices...)
+			}
+			nextIndices = append(nextIndices, merged)
+		}
+
+		currentLevel = nextLevel
+		indices = nextIndices
+	}
+
+	return MustNewHash(currentLevel[0]), proofs
+}
+
+// CR3: verifyMerkleProof verifies that a part hash is included in the Merkle root
+// via the provided proof path.
+func verifyMerkleProof(partHash Hash, index uint16, proofPath []Hash, root Hash) bool {
+	if len(proofPath) == 0 {
+		// Single element tree - hash should equal root
+		return HashEqual(partHash, root)
+	}
+
+	current := partHash
+	idx := index
+
+	for _, sibling := range proofPath {
+		var combined []byte
+		if idx%2 == 0 {
+			// Current is left child
+			combined = append(current.Data, sibling.Data...)
+		} else {
+			// Current is right child
+			combined = append(sibling.Data, current.Data...)
+		}
+		h := sha256.Sum256(combined)
+		current = MustNewHash(h[:])
+		idx = idx / 2
+	}
+
+	return HashEqual(current, root)
+}
+
 // BlockPartsFromBlock creates a PartSet from a block
 func BlockPartsFromBlock(block *Block) (*PartSet, error) {
 	if block == nil {
@@ -447,6 +564,12 @@ func PartSetBitmapFromBytes(data []byte) (*PartSetBitmap, error) {
 	}
 
 	total := uint16(data[0]) | uint16(data[1])<<8
+
+	// M2: Validate total against MaxBlockParts
+	if total > MaxBlockParts {
+		return nil, fmt.Errorf("bitmap total %d exceeds MaxBlockParts %d", total, MaxBlockParts)
+	}
+
 	numWords := (int(total) + 63) / 64
 
 	expectedLen := 2 + numWords*8

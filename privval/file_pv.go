@@ -2,6 +2,7 @@ package privval
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -210,16 +211,19 @@ func (pv *FilePV) saveKey() error {
 	// Sync temp file
 	tmpFile, err := os.Open(tmpPath)
 	if err != nil {
+		os.Remove(tmpPath) // L5: Clean up temp file
 		return fmt.Errorf("failed to open temp key file for sync: %w", err)
 	}
 	if err := tmpFile.Sync(); err != nil {
 		tmpFile.Close()
+		os.Remove(tmpPath) // L5: Clean up temp file
 		return fmt.Errorf("failed to sync temp key file: %w", err)
 	}
 	tmpFile.Close()
 
 	// Atomic rename
 	if err := os.Rename(tmpPath, pv.keyFilePath); err != nil {
+		os.Remove(tmpPath) // L5: Clean up temp file
 		return fmt.Errorf("failed to rename key file: %w", err)
 	}
 
@@ -386,18 +390,12 @@ func (pv *FilePV) GetPubKey() types.PublicKey {
 }
 
 // GetAddress returns the validator address
-// M5: Returns a copy to prevent callers from modifying internal state
+// M7: Derives address by hashing public key (standard practice similar to Ethereum/Tendermint)
 func (pv *FilePV) GetAddress() []byte {
-	// For now, just return the first 20 bytes of the public key
-	// In production, this would typically be a hash
-	var addr []byte
-	if len(pv.pubKey.Data) >= 20 {
-		addr = make([]byte, 20)
-		copy(addr, pv.pubKey.Data[:20])
-	} else {
-		addr = make([]byte, len(pv.pubKey.Data))
-		copy(addr, pv.pubKey.Data)
-	}
+	hash := sha256.Sum256(pv.pubKey.Data)
+	// Return first 20 bytes of hash (standard address length)
+	addr := make([]byte, 20)
+	copy(addr, hash[:20])
 	return addr
 }
 

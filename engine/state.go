@@ -404,6 +404,11 @@ func (cs *ConsensusState) enterNewRoundLocked(height int64, round int32) {
 
 	// Check if we're the proposer
 	proposer := cs.validatorSet.Proposer
+	// H2: Check proposer is not nil before accessing fields
+	if proposer == nil {
+		log.Printf("[WARN] consensus: no proposer set for height %d round %d", cs.height, cs.round)
+		return
+	}
 	if cs.privVal != nil && types.PublicKeyEqual(proposer.PublicKey, cs.privVal.GetPubKey()) {
 		cs.createAndSendProposalLocked()
 	}
@@ -463,7 +468,9 @@ func (cs *ConsensusState) createAndSendProposalLocked() {
 
 	// Sign proposal
 	if err := cs.privVal.SignProposal(cs.config.ChainID, proposal); err != nil {
-		log.Printf("[WARN] consensus: failed to sign proposal: %v", err)
+		// M6: Log at ERROR level - this is a significant failure
+		log.Printf("[ERROR] consensus: failed to sign proposal at height %d round %d: %v",
+			cs.height, cs.round, err)
 		return
 	}
 
@@ -504,6 +511,11 @@ func (cs *ConsensusState) handleProposal(proposal *gen.Proposal) {
 
 	// Verify proposer
 	proposer := cs.validatorSet.Proposer
+	// H2: Check proposer is not nil before accessing fields
+	if proposer == nil {
+		log.Printf("[WARN] consensus: no proposer set, cannot verify proposal")
+		return
+	}
 	if !types.AccountNameEqual(proposal.Proposer, proposer.Name) {
 		return
 	}
@@ -841,7 +853,10 @@ func (cs *ConsensusState) handleVote(vote *gen.Vote) {
 			if err := cs.evidencePool.AddDuplicateVoteEvidence(dve); err != nil {
 				log.Printf("[DEBUG] consensus: failed to add evidence: %v", err)
 			}
-			// Continue processing - we still track the vote even if it's equivocation
+			// L4: Continue processing - equivocating votes still count toward quorum.
+			// The equivocator will be slashed via the evidence pool, but we can't
+			// exclude their vote from consensus without breaking liveness (they may
+			// be needed for 2/3+ threshold).
 		}
 	}
 
@@ -940,7 +955,9 @@ func (cs *ConsensusState) handleTimeout(ti TimeoutInfo) {
 		}
 
 	case RoundStepCommit:
-		// Start new height
+		// CR1: Commit timeout should rarely fire - if we get here, the block wasn't
+		// applied to state in time. Log a warning and try to recover.
+		log.Printf("[WARN] consensus: commit timeout at height %d - attempting recovery", cs.height)
 		cs.enterNewRoundLocked(cs.height, 0)
 	}
 }
@@ -1031,7 +1048,18 @@ func (cs *ConsensusState) GetState() (height int64, round int32, step RoundStep)
 func (cs *ConsensusState) GetValidatorSet() *types.ValidatorSet {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
-	return cs.validatorSet
+
+	if cs.validatorSet == nil {
+		return nil
+	}
+
+	// H1: Return copy to prevent caller from modifying internal state
+	vsCopy, err := cs.validatorSet.Copy()
+	if err != nil {
+		log.Printf("[ERROR] consensus: failed to copy validator set: %v", err)
+		return nil
+	}
+	return vsCopy
 }
 
 // String returns a string representation of the step

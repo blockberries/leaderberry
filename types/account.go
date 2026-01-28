@@ -118,7 +118,6 @@ func VerifyAuthorization(
 		if visited[accName] {
 			continue
 		}
-		visited[accName] = true
 
 		// Find the account in authority
 		for _, aw := range authority.Accounts {
@@ -129,13 +128,21 @@ func VerifyAuthorization(
 					continue
 				}
 
+				// M1: Create copy of visited map for this branch
+				// This prevents false cycle detection in diamond patterns
+				branchVisited := make(map[string]bool, len(visited)+1)
+				for k, v := range visited {
+					branchVisited[k] = v
+				}
+				branchVisited[accName] = true
+
 				// Recursively verify
 				weight, err := VerifyAuthorization(
 					&accAuth.Authorization,
 					&acc.Authority,
 					signBytes,
 					getAccount,
-					visited,
+					branchVisited,
 				)
 				if err != nil {
 					continue
