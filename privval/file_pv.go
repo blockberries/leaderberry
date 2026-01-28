@@ -48,6 +48,10 @@ type FilePVState struct {
 	Step      int8   `json:"step"`
 	Signature []byte `json:"signature,omitempty"`
 	BlockHash []byte `json:"block_hash,omitempty"`
+	// TWELFTH_REFACTOR: Hash of complete sign bytes for accurate idempotency check
+	SignBytesHash []byte `json:"sign_bytes_hash,omitempty"`
+	// TWELFTH_REFACTOR: Timestamp for idempotency check
+	Timestamp int64 `json:"timestamp,omitempty"`
 }
 
 // LoadFilePV loads an existing file-based private validator.
@@ -288,6 +292,18 @@ func (pv *FilePV) loadStateStrict() error {
 		pv.lastSignState.BlockHash = &hash
 	}
 
+	// TWELFTH_REFACTOR: Load sign bytes hash for accurate idempotency check
+	if len(state.SignBytesHash) > 0 {
+		hash, err := types.NewHash(state.SignBytesHash)
+		if err != nil {
+			return fmt.Errorf("invalid sign bytes hash in state file: %w", err)
+		}
+		pv.lastSignState.SignBytesHash = &hash
+	}
+
+	// TWELFTH_REFACTOR: Load timestamp for idempotency check
+	pv.lastSignState.Timestamp = state.Timestamp
+
 	return nil
 }
 
@@ -330,6 +346,18 @@ func (pv *FilePV) loadState() error {
 		pv.lastSignState.BlockHash = &hash
 	}
 
+	// TWELFTH_REFACTOR: Load sign bytes hash for accurate idempotency check
+	if len(state.SignBytesHash) > 0 {
+		hash, err := types.NewHash(state.SignBytesHash)
+		if err != nil {
+			return fmt.Errorf("invalid sign bytes hash in state file: %w", err)
+		}
+		pv.lastSignState.SignBytesHash = &hash
+	}
+
+	// TWELFTH_REFACTOR: Load timestamp for idempotency check
+	pv.lastSignState.Timestamp = state.Timestamp
+
 	return nil
 }
 
@@ -354,6 +382,14 @@ func (pv *FilePV) saveState() error {
 	if pv.lastSignState.BlockHash != nil {
 		state.BlockHash = pv.lastSignState.BlockHash.Data
 	}
+
+	// TWELFTH_REFACTOR: Save sign bytes hash for accurate idempotency check
+	if pv.lastSignState.SignBytesHash != nil {
+		state.SignBytesHash = pv.lastSignState.SignBytesHash.Data
+	}
+
+	// TWELFTH_REFACTOR: Save timestamp for idempotency check
+	state.Timestamp = pv.lastSignState.Timestamp
 
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -438,6 +474,11 @@ func (pv *FilePV) SignVote(chainID string, vote *gen.Vote) error {
 	sig := ed25519.Sign(pv.privKey, signBytes)
 	newSig := types.MustNewSignature(sig) // ed25519 output is always valid
 
+	// TWELFTH_REFACTOR: Compute hash of sign bytes for accurate idempotency check.
+	// This ensures isSameVote can verify the entire payload matches, not just BlockHash.
+	signBytesHash := sha256.Sum256(signBytes)
+	signBytesHashObj := types.MustNewHash(signBytesHash[:])
+
 	// SEVENTH_REFACTOR: Prevent double-sign vulnerability by ensuring we never
 	// return a signature until the state is durably persisted.
 	// EIGHTH_REFACTOR: Clarified comment - the actual sequence is:
@@ -453,7 +494,12 @@ func (pv *FilePV) SignVote(chainID string, vote *gen.Vote) error {
 	pv.lastSignState.Round = vote.Round
 	pv.lastSignState.Step = step
 	pv.lastSignState.Signature = newSig
-	pv.lastSignState.BlockHash = vote.BlockHash
+	// ELEVENTH_REFACTOR: Deep copy BlockHash to prevent caller modifications
+	// from corrupting lastSignState and breaking double-sign detection.
+	pv.lastSignState.BlockHash = types.CopyHash(vote.BlockHash)
+	// TWELFTH_REFACTOR: Store sign bytes hash and timestamp for accurate idempotency check
+	pv.lastSignState.SignBytesHash = &signBytesHashObj
+	pv.lastSignState.Timestamp = vote.Timestamp
 
 	// Persist state - PANIC on failure (consensus critical)
 	if err := pv.saveState(); err != nil {
@@ -499,6 +545,8 @@ func (pv *FilePV) SignProposal(chainID string, proposal *gen.Proposal) error {
 	pv.lastSignState.Step = StepProposal
 	pv.lastSignState.Signature = newSig
 	pv.lastSignState.BlockHash = &blockHash
+	// TWELFTH_REFACTOR: Store timestamp for accurate idempotency check
+	pv.lastSignState.Timestamp = proposal.Timestamp
 
 	// Persist state - PANIC on failure (consensus critical)
 	if err := pv.saveState(); err != nil {
@@ -513,8 +561,15 @@ func (pv *FilePV) SignProposal(chainID string, proposal *gen.Proposal) error {
 	return nil
 }
 
-// isSameProposal checks if a proposal matches the last signed proposal
+// isSameProposal checks if a proposal matches the last signed proposal.
+// TWELFTH_REFACTOR: Now also checks Timestamp since ProposalSignBytes includes it.
 func (pv *FilePV) isSameProposal(proposal *gen.Proposal) bool {
+	// TWELFTH_REFACTOR: Check timestamp first - if it differs, the signature
+	// won't match even if BlockHash is the same.
+	if pv.lastSignState.Timestamp != 0 && pv.lastSignState.Timestamp != proposal.Timestamp {
+		return false
+	}
+
 	if pv.lastSignState.BlockHash == nil {
 		return false
 	}
@@ -522,21 +577,24 @@ func (pv *FilePV) isSameProposal(proposal *gen.Proposal) bool {
 	return types.HashEqual(*pv.lastSignState.BlockHash, blockHash)
 }
 
-// isSameVote checks if a vote matches the last signed vote
 // isSameVote checks if the vote matches the last signed vote.
-// M6: This is called only after CheckHRS verified H/R/S match, so we only
-// need to check that block hash matches. If all of H/R/S/BlockHash match,
-// re-signing would produce the same signature (deterministic signing).
+// TWELFTH_REFACTOR: Now also checks Timestamp since VoteSignBytes includes it.
+// If Timestamp differs, the stored signature won't verify against the new vote.
 func (pv *FilePV) isSameVote(vote *gen.Vote) bool {
-	// Both nil - same vote for nil block
+	// TWELFTH_REFACTOR: Check timestamp first - if it differs, the signature
+	// won't match even if BlockHash is the same. This prevents returning
+	// invalid signatures for votes with different timestamps.
+	if pv.lastSignState.Timestamp != 0 && pv.lastSignState.Timestamp != vote.Timestamp {
+		return false
+	}
+
+	// Check BlockHash
 	if pv.lastSignState.BlockHash == nil && vote.BlockHash == nil {
 		return true
 	}
-	// One nil, one not - different votes
 	if pv.lastSignState.BlockHash == nil || vote.BlockHash == nil {
 		return false
 	}
-	// Both non-nil - compare hashes
 	return types.HashEqual(*pv.lastSignState.BlockHash, *vote.BlockHash)
 }
 

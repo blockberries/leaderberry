@@ -97,7 +97,11 @@ func CopyHash(h *Hash) *Hash {
 }
 
 // CopyCommitSig creates a deep copy of a CommitSig.
+// TWELFTH_REFACTOR: Added nil check for defensive programming.
 func CopyCommitSig(sig *CommitSig) CommitSig {
+	if sig == nil {
+		return CommitSig{}
+	}
 	sigCopy := CommitSig{
 		ValidatorIndex: sig.ValidatorIndex,
 		Timestamp:      sig.Timestamp,

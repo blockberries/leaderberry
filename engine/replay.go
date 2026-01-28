@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 
 	"github.com/blockberries/leaderberry/wal"
 	gen "github.com/blockberries/leaderberry/types/generated"
@@ -195,6 +196,7 @@ func (cs *ConsensusState) ReplayCatchup(targetHeight int64) error {
 }
 
 // addVoteNoLock adds a vote without acquiring the lock (caller must hold lock)
+// ELEVENTH_REFACTOR: Now handles conflicting votes to preserve Byzantine evidence.
 func (cs *ConsensusState) addVoteNoLock(vote *gen.Vote) {
 	// Get the appropriate vote set
 	var voteSet interface {
@@ -215,8 +217,15 @@ func (cs *ConsensusState) addVoteNoLock(vote *gen.Vote) {
 		return
 	}
 
-	// Add vote (ignore errors during replay)
-	voteSet.AddVote(vote)
+	// ELEVENTH_REFACTOR: Handle equivocation during replay instead of ignoring.
+	// If we see conflicting votes during replay, that's Byzantine evidence.
+	_, err := voteSet.AddVote(vote)
+	if err == ErrConflictingVote {
+		log.Printf("[WARN] consensus: conflicting vote detected during replay: "+
+			"height=%d round=%d validator=%d", vote.Height, vote.Round, vote.ValidatorIndex)
+	} else if err != nil {
+		log.Printf("[DEBUG] consensus: error adding vote during replay: %v", err)
+	}
 }
 
 // WALWriter provides methods for writing WAL entries

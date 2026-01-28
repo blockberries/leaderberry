@@ -168,14 +168,16 @@ func (vs *ValidatorSet) getProposer() *NamedValidator {
 	return proposer
 }
 
-// GetByName returns a validator by name
+// GetByName returns a validator by name.
+// ELEVENTH_REFACTOR: Returns a deep copy to prevent callers from corrupting state.
 func (vs *ValidatorSet) GetByName(name string) *NamedValidator {
-	return vs.byName[name]
+	return CopyValidator(vs.byName[name])
 }
 
-// GetByIndex returns a validator by index
+// GetByIndex returns a validator by index.
+// ELEVENTH_REFACTOR: Returns a deep copy to prevent callers from corrupting state.
 func (vs *ValidatorSet) GetByIndex(index uint16) *NamedValidator {
-	return vs.byIndex[index]
+	return CopyValidator(vs.byIndex[index])
 }
 
 // Size returns the number of validators
@@ -265,23 +267,8 @@ func (vs *ValidatorSet) WithIncrementedPriority(times int32) (*ValidatorSet, err
 func (vs *ValidatorSet) Copy() (*ValidatorSet, error) {
 	validators := make([]*NamedValidator, len(vs.Validators))
 	for i, v := range vs.Validators {
-		// M1: Deep copy Name (has *string that could be shared)
-		nameCopy := CopyAccountName(v.Name)
-
-		// M1: Deep copy PublicKey.Data
-		var pubKeyCopy PublicKey
-		if len(v.PublicKey.Data) > 0 {
-			pubKeyCopy.Data = make([]byte, len(v.PublicKey.Data))
-			copy(pubKeyCopy.Data, v.PublicKey.Data)
-		}
-
-		validators[i] = &NamedValidator{
-			Name:             nameCopy,
-			Index:            v.Index,
-			PublicKey:        pubKeyCopy,
-			VotingPower:      v.VotingPower,
-			ProposerPriority: v.ProposerPriority,
-		}
+		// ELEVENTH_REFACTOR: Use CopyValidator helper for consistency
+		validators[i] = CopyValidator(v)
 	}
 
 	// M2: Build the set manually to preserve priorities exactly
@@ -305,6 +292,27 @@ func (vs *ValidatorSet) Copy() (*ValidatorSet, error) {
 	}
 
 	return newVS, nil
+}
+
+// CopyValidator creates a deep copy of a validator.
+// ELEVENTH_REFACTOR: Extracted from Copy() for use in GetByName/GetByIndex.
+func CopyValidator(v *NamedValidator) *NamedValidator {
+	if v == nil {
+		return nil
+	}
+	nameCopy := CopyAccountName(v.Name)
+	var pubKeyCopy PublicKey
+	if len(v.PublicKey.Data) > 0 {
+		pubKeyCopy.Data = make([]byte, len(v.PublicKey.Data))
+		copy(pubKeyCopy.Data, v.PublicKey.Data)
+	}
+	return &NamedValidator{
+		Name:             nameCopy,
+		Index:            v.Index,
+		PublicKey:        pubKeyCopy,
+		VotingPower:      v.VotingPower,
+		ProposerPriority: v.ProposerPriority,
+	}
 }
 
 // ToData converts to serializable form

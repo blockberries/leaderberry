@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/blockberries/leaderberry/types"
@@ -30,6 +31,11 @@ type VoteSet struct {
 
 	// Peer claims of 2/3+ majority (used for POL validation and vote requesting)
 	peerMaj23 map[string]*types.Hash // peerID -> claimed block hash
+
+	// TWELFTH_REFACTOR: Generation counter and parent reference for stale detection.
+	// If parent.generation != myGeneration, this VoteSet is stale and should reject writes.
+	parent       *HeightVoteSet
+	myGeneration uint64
 }
 
 type blockVotes struct {
@@ -38,7 +44,9 @@ type blockVotes struct {
 	totalPower int64
 }
 
-// NewVoteSet creates a new VoteSet for tracking votes
+// NewVoteSet creates a new VoteSet for tracking votes.
+// TWELFTH_REFACTOR: Now accepts parent HeightVoteSet for stale reference detection.
+// Pass nil for parent in standalone usage (e.g., tests).
 func NewVoteSet(
 	chainID string,
 	height int64,
@@ -57,11 +65,43 @@ func NewVoteSet(
 	}
 }
 
+// newVoteSetWithParent creates a VoteSet linked to a HeightVoteSet for stale detection.
+// Caller must hold hvs.mu.
+func newVoteSetWithParent(
+	hvs *HeightVoteSet,
+	round int32,
+	voteType gen.VoteType,
+) *VoteSet {
+	return &VoteSet{
+		chainID:      hvs.chainID,
+		height:       hvs.height,
+		round:        round,
+		voteType:     voteType,
+		validatorSet: hvs.validatorSet,
+		votes:        make(map[uint16]*gen.Vote),
+		votesByBlock: make(map[string]*blockVotes),
+		parent:       hvs,
+		myGeneration: hvs.generation.Load(),
+	}
+}
+
 // AddVote adds a vote to the set. Returns true if the vote was added.
 // Returns an error if the vote is invalid or conflicts with an existing vote.
+// TWELFTH_REFACTOR: Returns ErrStaleVoteSet if this VoteSet is from a previous height.
 func (vs *VoteSet) AddVote(vote *gen.Vote) (bool, error) {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
+
+	// TWELFTH_REFACTOR: Check for stale VoteSet reference.
+	// If this VoteSet was created for a previous height (generation mismatch),
+	// reject the vote to prevent lost votes after Reset().
+	// Uses atomic to avoid deadlock with HeightVoteSet.AddVote() which holds hvs.mu.
+	if vs.parent != nil {
+		currentGen := vs.parent.generation.Load()
+		if currentGen != vs.myGeneration {
+			return false, ErrStaleVoteSet
+		}
+	}
 
 	// Validate vote matches this set
 	if vote.Height != vs.height || vote.Round != vs.round || vote.Type != vs.voteType {
@@ -105,17 +145,21 @@ func (vs *VoteSet) AddVote(vote *gen.Vote) (bool, error) {
 	}
 
 	// Add vote
-	vs.votes[vote.ValidatorIndex] = vote
+	// ELEVENTH_REFACTOR: Deep copy the vote before storing to prevent caller
+	// modifications from corrupting internal state. This is consistent with
+	// the defensive copying done in GetVotes() and GetVote().
+	voteCopy := types.CopyVote(vote)
+	vs.votes[voteCopy.ValidatorIndex] = voteCopy
 	vs.sum += val.VotingPower
 
 	// Track by block hash
-	key := blockHashKey(vote.BlockHash)
+	key := blockHashKey(voteCopy.BlockHash)
 	bv, ok := vs.votesByBlock[key]
 	if !ok {
-		bv = &blockVotes{blockHash: vote.BlockHash}
+		bv = &blockVotes{blockHash: voteCopy.BlockHash}
 		vs.votesByBlock[key] = bv
 	}
-	bv.votes = append(bv.votes, vote)
+	bv.votes = append(bv.votes, voteCopy)
 	bv.totalPower += val.VotingPower
 
 	// Check for 2/3+ majority
@@ -366,6 +410,11 @@ type HeightVoteSet struct {
 
 	prevotes   map[int32]*VoteSet
 	precommits map[int32]*VoteSet
+
+	// TWELFTH_REFACTOR: Generation counter to detect stale VoteSet references.
+	// Incremented on Reset() to invalidate VoteSets from previous heights.
+	// Uses atomic to avoid lock contention with VoteSet.AddVote().
+	generation atomic.Uint64
 }
 
 // NewHeightVoteSet creates a HeightVoteSet for a given height
@@ -381,6 +430,7 @@ func NewHeightVoteSet(chainID string, height int64, valSet *types.ValidatorSet) 
 
 // AddVote adds a vote to the appropriate VoteSet.
 // CR2: Keep lock held during entire operation to prevent race with Reset().
+// TWELFTH_REFACTOR: Uses newVoteSetWithParent for stale reference detection.
 func (hvs *HeightVoteSet) AddVote(vote *gen.Vote) (bool, error) {
 	hvs.mu.Lock()
 	defer hvs.mu.Unlock()
@@ -393,13 +443,13 @@ func (hvs *HeightVoteSet) AddVote(vote *gen.Vote) (bool, error) {
 	if vote.Type == types.VoteTypePrevote {
 		voteSet = hvs.prevotes[vote.Round]
 		if voteSet == nil {
-			voteSet = NewVoteSet(hvs.chainID, hvs.height, vote.Round, types.VoteTypePrevote, hvs.validatorSet)
+			voteSet = newVoteSetWithParent(hvs, vote.Round, types.VoteTypePrevote)
 			hvs.prevotes[vote.Round] = voteSet
 		}
 	} else if vote.Type == types.VoteTypePrecommit {
 		voteSet = hvs.precommits[vote.Round]
 		if voteSet == nil {
-			voteSet = NewVoteSet(hvs.chainID, hvs.height, vote.Round, types.VoteTypePrecommit, hvs.validatorSet)
+			voteSet = newVoteSetWithParent(hvs, vote.Round, types.VoteTypePrecommit)
 			hvs.precommits[vote.Round] = voteSet
 		}
 	} else {
@@ -427,6 +477,7 @@ func (hvs *HeightVoteSet) Precommits(round int32) *VoteSet {
 // SetPeerMaj23 records that a peer claims to have seen 2/3+ votes for a block.
 // This is used for proof-of-lock validation and requesting missing votes.
 // CR2: Keep lock held during entire operation to prevent race with Reset().
+// TWELFTH_REFACTOR: Uses newVoteSetWithParent for stale reference detection.
 func (hvs *HeightVoteSet) SetPeerMaj23(peerID string, round int32, voteType gen.VoteType, blockHash *types.Hash) {
 	hvs.mu.Lock()
 	defer hvs.mu.Unlock()
@@ -435,13 +486,13 @@ func (hvs *HeightVoteSet) SetPeerMaj23(peerID string, round int32, voteType gen.
 	if voteType == types.VoteTypePrevote {
 		voteSet = hvs.prevotes[round]
 		if voteSet == nil {
-			voteSet = NewVoteSet(hvs.chainID, hvs.height, round, types.VoteTypePrevote, hvs.validatorSet)
+			voteSet = newVoteSetWithParent(hvs, round, types.VoteTypePrevote)
 			hvs.prevotes[round] = voteSet
 		}
 	} else {
 		voteSet = hvs.precommits[round]
 		if voteSet == nil {
-			voteSet = NewVoteSet(hvs.chainID, hvs.height, round, types.VoteTypePrecommit, hvs.validatorSet)
+			voteSet = newVoteSetWithParent(hvs, round, types.VoteTypePrecommit)
 			hvs.precommits[round] = voteSet
 		}
 	}
@@ -456,7 +507,9 @@ func (hvs *HeightVoteSet) Height() int64 {
 	return hvs.height
 }
 
-// Reset clears all votes (used when moving to new height)
+// Reset clears all votes (used when moving to new height).
+// TWELFTH_REFACTOR: Increments generation to invalidate stale VoteSet references.
+// Any VoteSet obtained before Reset() will reject new votes after Reset().
 func (hvs *HeightVoteSet) Reset(height int64, valSet *types.ValidatorSet) {
 	hvs.mu.Lock()
 	defer hvs.mu.Unlock()
@@ -465,4 +518,5 @@ func (hvs *HeightVoteSet) Reset(height int64, valSet *types.ValidatorSet) {
 	hvs.validatorSet = valSet
 	hvs.prevotes = make(map[int32]*VoteSet)
 	hvs.precommits = make(map[int32]*VoteSet)
+	hvs.generation.Add(1) // TWELFTH_REFACTOR: Invalidate stale VoteSet references
 }

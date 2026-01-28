@@ -39,6 +39,14 @@ type LastSignState struct {
 	Step      int8 // 1 = prevote, 2 = precommit
 	Signature types.Signature
 	BlockHash *types.Hash
+	// TWELFTH_REFACTOR: Hash of complete sign bytes for accurate idempotency check.
+	// isSameVote must verify the entire signed payload matches, not just BlockHash,
+	// since sign bytes include Timestamp, Validator, and ValidatorIndex.
+	SignBytesHash *types.Hash
+	// TWELFTH_REFACTOR: Store timestamp for idempotency check.
+	// VoteSignBytes includes Timestamp, so re-signing with different timestamp
+	// produces different signBytes and thus the cached signature won't verify.
+	Timestamp int64
 }
 
 // Step values for double-sign prevention

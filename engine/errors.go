@@ -21,4 +21,6 @@ var (
 	ErrNotStarted         = errors.New("consensus not started")
 	ErrInvalidMessage     = errors.New("invalid consensus message")
 	ErrUnknownMessageType = errors.New("unknown consensus message type")
+	// TWELFTH_REFACTOR: Error for stale VoteSet references after Reset()
+	ErrStaleVoteSet = errors.New("stale vote set reference")
 )

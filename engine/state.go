@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -958,7 +959,15 @@ func (cs *ConsensusState) handleTimeout(ti TimeoutInfo) {
 	case RoundStepPrecommitWait:
 		if cs.step == RoundStepPrecommitWait {
 			// Move to next round
-			cs.enterNewRoundLocked(cs.height, cs.round+1)
+			// ELEVENTH_REFACTOR: Prevent int32 overflow when incrementing round.
+			// While extremely unlikely in normal operation, a malicious network
+			// could potentially cause excessive round increments.
+			nextRound := cs.round + 1
+			if nextRound < 0 {
+				log.Printf("[ERROR] consensus: round overflow at height %d, capping at MaxInt32", cs.height)
+				nextRound = math.MaxInt32
+			}
+			cs.enterNewRoundLocked(cs.height, nextRound)
 		}
 
 	case RoundStepCommit:
