@@ -1,6 +1,7 @@
 package types
 
 import (
+	"crypto/ed25519"
 	"errors"
 
 	gen "github.com/blockberries/leaderberry/types/generated"
@@ -210,4 +211,23 @@ func votesEqual(a, b *Vote) bool {
 		return false
 	}
 	return HashEqual(*a.BlockHash, *b.BlockHash)
+}
+
+// VerifyVoteSignature verifies the signature on a vote
+func VerifyVoteSignature(chainID string, vote *Vote, pubKey PublicKey) error {
+	if vote == nil {
+		return ErrInvalidVote
+	}
+	if len(vote.Signature.Data) == 0 {
+		return errors.New("vote has no signature")
+	}
+	if len(pubKey.Data) != ed25519.PublicKeySize {
+		return errors.New("invalid public key size")
+	}
+
+	signBytes := VoteSignBytes(chainID, vote)
+	if !ed25519.Verify(pubKey.Data, signBytes, vote.Signature.Data) {
+		return errors.New("invalid vote signature")
+	}
+	return nil
 }
