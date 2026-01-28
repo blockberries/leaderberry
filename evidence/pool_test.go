@@ -14,7 +14,7 @@ func makeTestValidator(name string, index uint16, power int64) *types.NamedValid
 	return &types.NamedValidator{
 		Name:        types.NewAccountName(name),
 		Index:       index,
-		PublicKey:   types.NewPublicKey(pubKey),
+		PublicKey:   types.MustNewPublicKey(pubKey),
 		VotingPower: power,
 	}
 }
@@ -305,12 +305,37 @@ func TestEvidenceKey(t *testing.T) {
 		Type:   EvidenceTypeDuplicateVote,
 		Height: 1,
 		Time:   1000,
+		Data:   []byte("test data"),
 	}
 
 	key := evidenceKey(ev)
-	expected := "1/1/1000" // type/height/time
-	if key != expected {
-		t.Errorf("expected key %q, got %q", expected, key)
+	// Key format: type/height/time/hash_prefix (first 8 bytes of SHA256)
+	// SHA256("test data") first 8 bytes in hex
+	if len(key) < 10 { // Should be at least "1/1/1000/..."
+		t.Errorf("key too short: %q", key)
+	}
+
+	// Verify it starts with type/height/time
+	if key[:8] != "1/1/1000" {
+		t.Errorf("key should start with '1/1/1000', got %q", key[:8])
+	}
+
+	// Same evidence should have same key
+	key2 := evidenceKey(ev)
+	if key != key2 {
+		t.Error("same evidence should produce same key")
+	}
+
+	// Different data should produce different key
+	ev2 := &gen.Evidence{
+		Type:   EvidenceTypeDuplicateVote,
+		Height: 1,
+		Time:   1000,
+		Data:   []byte("different data"),
+	}
+	key3 := evidenceKey(ev2)
+	if key == key3 {
+		t.Error("different data should produce different keys")
 	}
 }
 

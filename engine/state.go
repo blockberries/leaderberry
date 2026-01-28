@@ -3,12 +3,20 @@ package engine
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/blockberries/leaderberry/types"
 	"github.com/blockberries/leaderberry/wal"
 	gen "github.com/blockberries/leaderberry/types/generated"
+)
+
+// Channel buffer sizes
+const (
+	proposalChannelSize = 100
+	voteChannelSize     = 10000
 )
 
 // ConsensusState manages the consensus state machine
@@ -66,6 +74,10 @@ type ConsensusState struct {
 
 	// State
 	started bool
+
+	// Metrics - track dropped messages
+	droppedProposals uint64
+	droppedVotes     uint64
 }
 
 // PrivValidator interface for signing consensus messages
@@ -103,8 +115,8 @@ func NewConsensusState(
 		wal:           wal,
 		blockExecutor: executor,
 		timeoutTicker: NewTimeoutTicker(config.Timeouts),
-		proposalCh:    make(chan *gen.Proposal, 10),
-		voteCh:        make(chan *gen.Vote, 1000),
+		proposalCh:    make(chan *gen.Proposal, proposalChannelSize),
+		voteCh:        make(chan *gen.Vote, voteChannelSize),
 		commitCh:      make(chan struct{}, 1),
 		lockedRound:   -1,
 		validRound:    -1,
@@ -163,7 +175,10 @@ func (cs *ConsensusState) AddProposal(proposal *gen.Proposal) {
 	select {
 	case cs.proposalCh <- proposal:
 	default:
-		// Channel full, drop proposal
+		// Channel full, drop proposal and log warning
+		dropped := atomic.AddUint64(&cs.droppedProposals, 1)
+		log.Printf("[WARN] consensus: dropped proposal due to full channel (height=%d round=%d proposer=%s total_dropped=%d)",
+			proposal.Height, proposal.Round, types.AccountNameString(proposal.Proposer), dropped)
 	}
 }
 
@@ -172,8 +187,16 @@ func (cs *ConsensusState) AddVote(vote *gen.Vote) {
 	select {
 	case cs.voteCh <- vote:
 	default:
-		// Channel full, drop vote
+		// Channel full, drop vote and log warning
+		dropped := atomic.AddUint64(&cs.droppedVotes, 1)
+		log.Printf("[WARN] consensus: dropped vote due to full channel (height=%d round=%d type=%d validator=%s total_dropped=%d)",
+			vote.Height, vote.Round, vote.Type, types.AccountNameString(vote.Validator), dropped)
 	}
+}
+
+// GetDroppedMessageCounts returns counts of dropped messages for monitoring
+func (cs *ConsensusState) GetDroppedMessageCounts() (proposals, votes uint64) {
+	return atomic.LoadUint64(&cs.droppedProposals), atomic.LoadUint64(&cs.droppedVotes)
 }
 
 // receiveRoutine is the main event loop
@@ -246,6 +269,10 @@ func (cs *ConsensusState) createAndSendProposal() {
 		block = cs.lockedBlock
 	} else {
 		// Create new block
+		if cs.blockExecutor == nil {
+			// No executor configured, cannot create proposal
+			return
+		}
 		var err error
 		block, err = cs.blockExecutor.CreateProposalBlock(
 			cs.height,
@@ -318,9 +345,11 @@ func (cs *ConsensusState) handleProposal(proposal *gen.Proposal) {
 		return
 	}
 
-	// Validate block
-	if err := cs.blockExecutor.ValidateBlock(&proposal.Block); err != nil {
-		return
+	// Validate block (if executor available)
+	if cs.blockExecutor != nil {
+		if err := cs.blockExecutor.ValidateBlock(&proposal.Block); err != nil {
+			return
+		}
 	}
 
 	// Accept proposal
@@ -466,12 +495,14 @@ func (cs *ConsensusState) finalizeCommit(height int64, commit *gen.Commit) {
 		block = cs.proposalBlock
 	}
 	if block == nil {
-		return
+		panic(fmt.Sprintf("CONSENSUS CRITICAL: finalizeCommit called with no block at height %d", height))
 	}
 
-	// Apply block
-	if err := cs.blockExecutor.ApplyBlock(block, commit); err != nil {
-		return
+	// Apply block - PANIC on failure (consensus has decided, failure is catastrophic)
+	if cs.blockExecutor != nil {
+		if err := cs.blockExecutor.ApplyBlock(block, commit); err != nil {
+			panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to apply committed block at height %d: %v", height, err))
+		}
 	}
 
 	// Move to next height

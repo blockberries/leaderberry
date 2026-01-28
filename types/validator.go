@@ -2,6 +2,7 @@ package types
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 
 	gen "github.com/blockberries/leaderberry/types/generated"
@@ -11,12 +12,27 @@ import (
 type NamedValidator = gen.NamedValidator
 type ValidatorSetData = gen.ValidatorSetData
 
+// Constants
+const (
+	// MaxValidators is the maximum number of validators in a set
+	// Limited by uint16 index and practical performance considerations
+	MaxValidators = 65535
+
+	// MaxTotalVotingPower prevents overflow in priority calculations
+	MaxTotalVotingPower = int64(1) << 60
+
+	// PriorityWindowSize for clamping priorities
+	PriorityWindowSize = MaxTotalVotingPower * 2
+)
+
 // Errors
 var (
 	ErrValidatorNotFound  = errors.New("validator not found")
 	ErrDuplicateValidator = errors.New("duplicate validator")
 	ErrEmptyValidatorSet  = errors.New("empty validator set")
 	ErrInvalidVotingPower = errors.New("invalid voting power")
+	ErrTooManyValidators  = errors.New("too many validators")
+	ErrTotalPowerOverflow = errors.New("total voting power overflow")
 )
 
 // ValidatorSet wraps ValidatorSetData with additional methods
@@ -33,6 +49,9 @@ func NewValidatorSet(validators []*NamedValidator) (*ValidatorSet, error) {
 	if len(validators) == 0 {
 		return nil, ErrEmptyValidatorSet
 	}
+	if len(validators) > MaxValidators {
+		return nil, fmt.Errorf("%w: %d (max %d)", ErrTooManyValidators, len(validators), MaxValidators)
+	}
 
 	vs := &ValidatorSet{
 		Validators: make([]*NamedValidator, len(validators)),
@@ -48,6 +67,11 @@ func NewValidatorSet(validators []*NamedValidator) (*ValidatorSet, error) {
 		name := AccountNameString(v.Name)
 		if _, exists := vs.byName[name]; exists {
 			return nil, ErrDuplicateValidator
+		}
+
+		// Check for total power overflow
+		if vs.TotalPower > MaxTotalVotingPower-v.VotingPower {
+			return nil, fmt.Errorf("%w: exceeds %d", ErrTotalPowerOverflow, MaxTotalVotingPower)
 		}
 
 		// Create copy with correct index
@@ -152,15 +176,25 @@ func (vs *ValidatorSet) IncrementProposerPriority(times int32) {
 	}
 
 	for i := int32(0); i < times; i++ {
-		// Increment all priorities by voting power
+		// Increment all priorities by voting power (with overflow protection)
 		for _, v := range vs.Validators {
-			v.ProposerPriority += v.VotingPower
+			newPriority := v.ProposerPriority + v.VotingPower
+			// Clamp to prevent overflow
+			if newPriority > PriorityWindowSize/2 {
+				newPriority = PriorityWindowSize / 2
+			}
+			v.ProposerPriority = newPriority
 		}
 
 		// Decrease proposer's priority by total power
 		proposer := vs.getProposer()
 		if proposer != nil {
-			proposer.ProposerPriority -= vs.TotalPower
+			newPriority := proposer.ProposerPriority - vs.TotalPower
+			// Clamp to prevent underflow
+			if newPriority < -PriorityWindowSize/2 {
+				newPriority = -PriorityWindowSize / 2
+			}
+			proposer.ProposerPriority = newPriority
 		}
 	}
 
@@ -168,8 +202,9 @@ func (vs *ValidatorSet) IncrementProposerPriority(times int32) {
 	vs.Proposer = vs.getProposer()
 }
 
-// Copy creates a deep copy of the validator set
-func (vs *ValidatorSet) Copy() *ValidatorSet {
+// Copy creates a deep copy of the validator set.
+// Returns error if the copy operation fails (should never happen for valid sets).
+func (vs *ValidatorSet) Copy() (*ValidatorSet, error) {
 	validators := make([]*NamedValidator, len(vs.Validators))
 	for i, v := range vs.Validators {
 		validators[i] = &NamedValidator{
@@ -181,8 +216,7 @@ func (vs *ValidatorSet) Copy() *ValidatorSet {
 		}
 	}
 
-	copy, _ := NewValidatorSet(validators)
-	return copy
+	return NewValidatorSet(validators)
 }
 
 // ToData converts to serializable form
@@ -224,7 +258,7 @@ func ValidatorSetFromData(data *ValidatorSetData) (*ValidatorSet, error) {
 	return vs, nil
 }
 
-// Hash computes a hash of the validator set
+// Hash computes a deterministic hash of the validator set
 func (vs *ValidatorSet) Hash() Hash {
 	// Sort validators by name for deterministic ordering
 	sorted := make([]*NamedValidator, len(vs.Validators))
@@ -233,8 +267,34 @@ func (vs *ValidatorSet) Hash() Hash {
 		return AccountNameString(sorted[i].Name) < AccountNameString(sorted[j].Name)
 	})
 
-	// Serialize and hash
-	data := vs.ToData()
-	bytes, _ := data.MarshalCramberry()
+	// Create data from sorted validators
+	validators := make([]NamedValidator, len(sorted))
+	for i, v := range sorted {
+		validators[i] = *v
+	}
+
+	// Find proposer index in sorted list
+	var proposerIndex uint16
+	if vs.Proposer != nil {
+		proposerName := AccountNameString(vs.Proposer.Name)
+		for i, v := range sorted {
+			if AccountNameString(v.Name) == proposerName {
+				proposerIndex = uint16(i)
+				break
+			}
+		}
+	}
+
+	// Create data struct from sorted validators
+	data := &ValidatorSetData{
+		Validators:    validators,
+		ProposerIndex: proposerIndex,
+		TotalPower:    vs.TotalPower,
+	}
+
+	bytes, err := data.MarshalCramberry()
+	if err != nil {
+		panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to marshal validator set for hash: %v", err))
+	}
 	return HashBytes(bytes)
 }

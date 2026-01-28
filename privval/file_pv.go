@@ -49,7 +49,31 @@ type FilePVState struct {
 	BlockHash []byte `json:"block_hash,omitempty"`
 }
 
-// NewFilePV creates a new file-based private validator
+// LoadFilePV loads an existing file-based private validator.
+// Returns error if key or state files don't exist.
+// Use this for production to ensure no accidental key regeneration.
+func LoadFilePV(keyFilePath, stateFilePath string) (*FilePV, error) {
+	pv := &FilePV{
+		keyFilePath:   keyFilePath,
+		stateFilePath: stateFilePath,
+	}
+
+	// Load key (must exist)
+	if err := pv.loadKeyStrict(); err != nil {
+		return nil, fmt.Errorf("failed to load key: %w", err)
+	}
+
+	// Load state (must exist)
+	if err := pv.loadStateStrict(); err != nil {
+		return nil, fmt.Errorf("failed to load state: %w", err)
+	}
+
+	return pv, nil
+}
+
+// NewFilePV creates or loads a file-based private validator.
+// If files don't exist, generates new key and state.
+// WARNING: Use LoadFilePV in production to avoid accidental key regeneration.
 func NewFilePV(keyFilePath, stateFilePath string) (*FilePV, error) {
 	pv := &FilePV{
 		keyFilePath:   keyFilePath,
@@ -80,7 +104,7 @@ func GenerateFilePV(keyFilePath, stateFilePath string) (*FilePV, error) {
 	pv := &FilePV{
 		keyFilePath:   keyFilePath,
 		stateFilePath: stateFilePath,
-		pubKey:        types.NewPublicKey(pubKey),
+		pubKey:        types.MustNewPublicKey(pubKey), // ed25519 output is always valid
 		privKey:       privKey,
 	}
 
@@ -97,6 +121,31 @@ func GenerateFilePV(keyFilePath, stateFilePath string) (*FilePV, error) {
 	return pv, nil
 }
 
+// loadKeyStrict loads the key from file, failing if it doesn't exist
+func (pv *FilePV) loadKeyStrict() error {
+	data, err := os.ReadFile(pv.keyFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to read key file %s: %w", pv.keyFilePath, err)
+	}
+
+	var key FilePVKey
+	if err := json.Unmarshal(data, &key); err != nil {
+		return fmt.Errorf("failed to parse key file: %w", err)
+	}
+
+	if len(key.PubKey) != ed25519.PublicKeySize {
+		return fmt.Errorf("invalid public key size: %d (expected %d)", len(key.PubKey), ed25519.PublicKeySize)
+	}
+	if len(key.PrivKey) != ed25519.PrivateKeySize {
+		return fmt.Errorf("invalid private key size: %d (expected %d)", len(key.PrivKey), ed25519.PrivateKeySize)
+	}
+
+	pv.pubKey = types.MustNewPublicKey(key.PubKey)
+	pv.privKey = key.PrivKey
+
+	return nil
+}
+
 // loadKey loads the key from file, generating if it doesn't exist
 func (pv *FilePV) loadKey() error {
 	data, err := os.ReadFile(pv.keyFilePath)
@@ -106,7 +155,7 @@ func (pv *FilePV) loadKey() error {
 		if err != nil {
 			return fmt.Errorf("failed to generate key: %w", err)
 		}
-		pv.pubKey = types.NewPublicKey(pubKey)
+		pv.pubKey = types.MustNewPublicKey(pubKey) // ed25519 output is always valid
 		pv.privKey = privKey
 		return pv.saveKey()
 	}
@@ -120,19 +169,20 @@ func (pv *FilePV) loadKey() error {
 	}
 
 	if len(key.PubKey) != ed25519.PublicKeySize {
-		return fmt.Errorf("invalid public key size")
+		return fmt.Errorf("invalid public key size: %d", len(key.PubKey))
 	}
 	if len(key.PrivKey) != ed25519.PrivateKeySize {
-		return fmt.Errorf("invalid private key size")
+		return fmt.Errorf("invalid private key size: %d", len(key.PrivKey))
 	}
 
-	pv.pubKey = types.NewPublicKey(key.PubKey)
+	// Size already validated above, safe to use Must
+	pv.pubKey = types.MustNewPublicKey(key.PubKey)
 	pv.privKey = key.PrivKey
 
 	return nil
 }
 
-// saveKey saves the key to file
+// saveKey saves the key to file using atomic write (temp + rename)
 func (pv *FilePV) saveKey() error {
 	// Ensure directory exists
 	dir := filepath.Dir(pv.keyFilePath)
@@ -150,14 +200,81 @@ func (pv *FilePV) saveKey() error {
 		return fmt.Errorf("failed to marshal key: %w", err)
 	}
 
-	if err := os.WriteFile(pv.keyFilePath, data, keyFilePerm); err != nil {
-		return fmt.Errorf("failed to write key file: %w", err)
+	// Atomic write: write to temp file, sync, then rename
+	tmpPath := pv.keyFilePath + ".tmp"
+
+	if err := os.WriteFile(tmpPath, data, keyFilePerm); err != nil {
+		return fmt.Errorf("failed to write temp key file: %w", err)
+	}
+
+	// Sync temp file
+	tmpFile, err := os.Open(tmpPath)
+	if err != nil {
+		return fmt.Errorf("failed to open temp key file for sync: %w", err)
+	}
+	if err := tmpFile.Sync(); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("failed to sync temp key file: %w", err)
+	}
+	tmpFile.Close()
+
+	// Atomic rename
+	if err := os.Rename(tmpPath, pv.keyFilePath); err != nil {
+		return fmt.Errorf("failed to rename key file: %w", err)
+	}
+
+	// Sync directory
+	dirFile, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("failed to open dir for sync: %w", err)
+	}
+	if err := dirFile.Sync(); err != nil {
+		dirFile.Close()
+		return fmt.Errorf("failed to sync directory: %w", err)
+	}
+	dirFile.Close()
+
+	return nil
+}
+
+// loadStateStrict loads the state from file, failing if it doesn't exist
+func (pv *FilePV) loadStateStrict() error {
+	data, err := os.ReadFile(pv.stateFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to read state file %s: %w", pv.stateFilePath, err)
+	}
+
+	var state FilePVState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return fmt.Errorf("failed to parse state file: %w", err)
+	}
+
+	pv.lastSignState = LastSignState{
+		Height: state.Height,
+		Round:  state.Round,
+		Step:   state.Step,
+	}
+
+	if len(state.Signature) > 0 {
+		sig, err := types.NewSignature(state.Signature)
+		if err != nil {
+			return fmt.Errorf("invalid signature in state file: %w", err)
+		}
+		pv.lastSignState.Signature = sig
+	}
+
+	if len(state.BlockHash) > 0 {
+		hash, err := types.NewHash(state.BlockHash)
+		if err != nil {
+			return fmt.Errorf("invalid block hash in state file: %w", err)
+		}
+		pv.lastSignState.BlockHash = &hash
 	}
 
 	return nil
 }
 
-// loadState loads the state from file
+// loadState loads the state from file, initializing if it doesn't exist
 func (pv *FilePV) loadState() error {
 	data, err := os.ReadFile(pv.stateFilePath)
 	if os.IsNotExist(err) {
@@ -181,18 +298,25 @@ func (pv *FilePV) loadState() error {
 	}
 
 	if len(state.Signature) > 0 {
-		pv.lastSignState.Signature = types.NewSignature(state.Signature)
+		sig, err := types.NewSignature(state.Signature)
+		if err != nil {
+			return fmt.Errorf("invalid signature in state file: %w", err)
+		}
+		pv.lastSignState.Signature = sig
 	}
 
 	if len(state.BlockHash) > 0 {
-		hash := types.NewHash(state.BlockHash)
+		hash, err := types.NewHash(state.BlockHash)
+		if err != nil {
+			return fmt.Errorf("invalid block hash in state file: %w", err)
+		}
 		pv.lastSignState.BlockHash = &hash
 	}
 
 	return nil
 }
 
-// saveState saves the state to file
+// saveState saves the state to file using atomic write (temp + rename)
 func (pv *FilePV) saveState() error {
 	// Ensure directory exists
 	dir := filepath.Dir(pv.stateFilePath)
@@ -219,9 +343,39 @@ func (pv *FilePV) saveState() error {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
 
-	if err := os.WriteFile(pv.stateFilePath, data, stateFilePerm); err != nil {
-		return fmt.Errorf("failed to write state file: %w", err)
+	// Atomic write: write to temp file, sync, then rename
+	tmpPath := pv.stateFilePath + ".tmp"
+
+	if err := os.WriteFile(tmpPath, data, stateFilePerm); err != nil {
+		return fmt.Errorf("failed to write temp state file: %w", err)
 	}
+
+	// Sync temp file to ensure data is on disk
+	tmpFile, err := os.Open(tmpPath)
+	if err != nil {
+		return fmt.Errorf("failed to open temp file for sync: %w", err)
+	}
+	if err := tmpFile.Sync(); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("failed to sync temp file: %w", err)
+	}
+	tmpFile.Close()
+
+	// Atomic rename
+	if err := os.Rename(tmpPath, pv.stateFilePath); err != nil {
+		return fmt.Errorf("failed to rename state file: %w", err)
+	}
+
+	// Sync directory to ensure rename is persisted
+	dirFile, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("failed to open dir for sync: %w", err)
+	}
+	if err := dirFile.Sync(); err != nil {
+		dirFile.Close()
+		return fmt.Errorf("failed to sync directory: %w", err)
+	}
+	dirFile.Close()
 
 	return nil
 }
@@ -262,7 +416,7 @@ func (pv *FilePV) SignVote(chainID string, vote *gen.Vote) error {
 	// Sign the vote
 	signBytes := types.VoteSignBytes(chainID, vote)
 	sig := ed25519.Sign(pv.privKey, signBytes)
-	vote.Signature = types.NewSignature(sig)
+	vote.Signature = types.MustNewSignature(sig) // ed25519 output is always valid
 
 	// Update state
 	pv.lastSignState.Height = vote.Height
@@ -271,21 +425,57 @@ func (pv *FilePV) SignVote(chainID string, vote *gen.Vote) error {
 	pv.lastSignState.Signature = vote.Signature
 	pv.lastSignState.BlockHash = vote.BlockHash
 
-	// Persist state
-	return pv.saveState()
+	// Persist state - PANIC on failure (consensus critical)
+	if err := pv.saveState(); err != nil {
+		panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to persist sign state after vote: %v", err))
+	}
+
+	return nil
 }
 
-// SignProposal signs a proposal
+// SignProposal signs a proposal, checking for double-sign
 func (pv *FilePV) SignProposal(chainID string, proposal *gen.Proposal) error {
 	pv.mu.Lock()
 	defer pv.mu.Unlock()
 
+	// Check for double-sign
+	if err := pv.lastSignState.CheckHRS(proposal.Height, proposal.Round, StepProposal); err != nil {
+		// Check if it's the same proposal (idempotent re-signing)
+		if err == ErrDoubleSign && pv.isSameProposal(proposal) {
+			proposal.Signature = pv.lastSignState.Signature
+			return nil
+		}
+		return err
+	}
+
 	// Sign the proposal
 	signBytes := types.ProposalSignBytes(chainID, proposal)
 	sig := ed25519.Sign(pv.privKey, signBytes)
-	proposal.Signature = types.NewSignature(sig)
+	proposal.Signature = types.MustNewSignature(sig) // ed25519 output is always valid
+
+	// Update state
+	blockHash := types.BlockHash(&proposal.Block)
+	pv.lastSignState.Height = proposal.Height
+	pv.lastSignState.Round = proposal.Round
+	pv.lastSignState.Step = StepProposal
+	pv.lastSignState.Signature = proposal.Signature
+	pv.lastSignState.BlockHash = &blockHash
+
+	// Persist state - PANIC on failure (consensus critical)
+	if err := pv.saveState(); err != nil {
+		panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to persist sign state after proposal: %v", err))
+	}
 
 	return nil
+}
+
+// isSameProposal checks if a proposal matches the last signed proposal
+func (pv *FilePV) isSameProposal(proposal *gen.Proposal) bool {
+	if pv.lastSignState.BlockHash == nil {
+		return false
+	}
+	blockHash := types.BlockHash(&proposal.Block)
+	return types.HashEqual(*pv.lastSignState.BlockHash, blockHash)
 }
 
 // isSameVote checks if a vote matches the last signed vote

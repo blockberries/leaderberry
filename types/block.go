@@ -1,6 +1,8 @@
 package types
 
 import (
+	"fmt"
+
 	gen "github.com/blockberries/leaderberry/types/generated"
 )
 
@@ -15,7 +17,10 @@ func BlockHash(b *Block) Hash {
 	if b == nil {
 		return HashEmpty()
 	}
-	data, _ := b.Header.MarshalCramberry()
+	data, err := b.Header.MarshalCramberry()
+	if err != nil {
+		panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to marshal block header for hash: %v", err))
+	}
 	return HashBytes(data)
 }
 
@@ -24,7 +29,10 @@ func BlockHeaderHash(h *BlockHeader) Hash {
 	if h == nil {
 		return HashEmpty()
 	}
-	data, _ := h.MarshalCramberry()
+	data, err := h.MarshalCramberry()
+	if err != nil {
+		panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to marshal block header: %v", err))
+	}
 	return HashBytes(data)
 }
 
@@ -68,6 +76,9 @@ func CommitHash(c *Commit) Hash {
 	if c == nil {
 		return HashEmpty()
 	}
-	data, _ := c.MarshalCramberry()
+	data, err := c.MarshalCramberry()
+	if err != nil {
+		panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to marshal commit for hash: %v", err))
+	}
 	return HashBytes(data)
 }

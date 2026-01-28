@@ -1,10 +1,17 @@
 package engine
 
 import (
+	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	gen "github.com/blockberries/leaderberry/types/generated"
+)
+
+const (
+	// timeoutChannelSize is the buffer size for timeout channels
+	timeoutChannelSize = 100
 )
 
 // RoundStep type aliases
@@ -63,14 +70,17 @@ type TimeoutTicker struct {
 	tockCh   chan TimeoutInfo
 	stopCh   chan struct{}
 	running  bool
+
+	// Metrics
+	droppedTimeouts uint64
 }
 
 // NewTimeoutTicker creates a new TimeoutTicker
 func NewTimeoutTicker(config TimeoutConfig) *TimeoutTicker {
 	return &TimeoutTicker{
 		config: config,
-		tickCh: make(chan TimeoutInfo, 10),
-		tockCh: make(chan TimeoutInfo, 10),
+		tickCh: make(chan TimeoutInfo, timeoutChannelSize),
+		tockCh: make(chan TimeoutInfo, timeoutChannelSize),
 		stopCh: make(chan struct{}),
 	}
 }
@@ -139,7 +149,10 @@ func (tt *TimeoutTicker) run() {
 				case <-tt.stopCh:
 					// Ticker stopped, don't send
 				default:
-					// Channel full, drop timeout
+					// Channel full, drop timeout and log warning
+					count := atomic.AddUint64(&tt.droppedTimeouts, 1)
+					log.Printf("WARN: dropped timeout due to full channel: height=%d round=%d step=%d total_dropped=%d",
+						tiCopy.Height, tiCopy.Round, tiCopy.Step, count)
 				}
 			})
 			tt.mu.Unlock()
@@ -180,4 +193,9 @@ func (tt *TimeoutTicker) Precommit(round int32) time.Duration {
 // Commit returns the commit timeout
 func (tt *TimeoutTicker) Commit() time.Duration {
 	return tt.config.Commit
+}
+
+// DroppedTimeouts returns the number of timeouts dropped due to full channel
+func (tt *TimeoutTicker) DroppedTimeouts() uint64 {
+	return atomic.LoadUint64(&tt.droppedTimeouts)
 }

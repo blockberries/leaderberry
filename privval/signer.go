@@ -41,11 +41,13 @@ type LastSignState struct {
 	BlockHash *types.Hash
 }
 
-// StepPrevote is the step value for prevotes
-const StepPrevote int8 = 1
-
-// StepPrecommit is the step value for precommits
-const StepPrecommit int8 = 2
+// Step values for double-sign prevention
+// Proposals come before votes in a round
+const (
+	StepProposal  int8 = 0
+	StepPrevote   int8 = 1
+	StepPrecommit int8 = 2
+)
 
 // CheckHRS checks if a new vote would be a double sign
 // Returns nil if signing is allowed, an error otherwise

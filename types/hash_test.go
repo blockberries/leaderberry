@@ -11,19 +11,30 @@ func TestNewHash(t *testing.T) {
 		data[i] = byte(i)
 	}
 
-	h := NewHash(data)
+	h, err := NewHash(data)
+	if err != nil {
+		t.Fatalf("NewHash failed: %v", err)
+	}
 	if !bytes.Equal(h.Data, data) {
 		t.Error("hash data mismatch")
 	}
 }
 
-func TestNewHashPanicsOnWrongSize(t *testing.T) {
+func TestNewHashError(t *testing.T) {
+	// Wrong size should return error
+	_, err := NewHash(make([]byte, 16))
+	if err == nil {
+		t.Error("expected error for wrong size")
+	}
+}
+
+func TestMustNewHashPanics(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
 			t.Error("expected panic for wrong size")
 		}
 	}()
-	NewHash(make([]byte, 16))
+	MustNewHash(make([]byte, 16))
 }
 
 func TestHashBytes(t *testing.T) {
@@ -72,7 +83,7 @@ func TestIsHashEmpty(t *testing.T) {
 	// Non-zero hash is not empty
 	data := make([]byte, 32)
 	data[0] = 1
-	h2 := NewHash(data)
+	h2 := MustNewHash(data)
 	if IsHashEmpty(&h2) {
 		t.Error("non-zero hash should not be empty")
 	}
@@ -86,15 +97,15 @@ func TestHashEqual(t *testing.T) {
 		data2[i] = byte(i)
 	}
 
-	h1 := NewHash(data1)
-	h2 := NewHash(data2)
+	h1 := MustNewHash(data1)
+	h2 := MustNewHash(data2)
 
 	if !HashEqual(h1, h2) {
 		t.Error("equal hashes should be equal")
 	}
 
 	data2[0] = 255
-	h3 := NewHash(data2)
+	h3 := MustNewHash(data2)
 	if HashEqual(h1, h3) {
 		t.Error("different hashes should not be equal")
 	}
@@ -106,7 +117,7 @@ func TestHashString(t *testing.T) {
 		data[i] = byte(i)
 	}
 
-	h := NewHash(data)
+	h := MustNewHash(data)
 	s := HashString(h)
 
 	if len(s) != 64 { // hex encoded 32 bytes = 64 chars
@@ -116,33 +127,71 @@ func TestHashString(t *testing.T) {
 
 func TestNewPublicKey(t *testing.T) {
 	data := make([]byte, 32)
-	pk := NewPublicKey(data)
+	pk, err := NewPublicKey(data)
+	if err != nil {
+		t.Fatalf("NewPublicKey failed: %v", err)
+	}
 	if !bytes.Equal(pk.Data, data) {
 		t.Error("public key data mismatch")
 	}
 }
 
+func TestNewPublicKeyError(t *testing.T) {
+	_, err := NewPublicKey(make([]byte, 16))
+	if err == nil {
+		t.Error("expected error for wrong size")
+	}
+}
+
+func TestMustNewPublicKeyPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic for wrong size")
+		}
+	}()
+	MustNewPublicKey(make([]byte, 16))
+}
+
 func TestNewSignature(t *testing.T) {
 	data := make([]byte, 64)
-	sig := NewSignature(data)
+	sig, err := NewSignature(data)
+	if err != nil {
+		t.Fatalf("NewSignature failed: %v", err)
+	}
 	if !bytes.Equal(sig.Data, data) {
 		t.Error("signature data mismatch")
 	}
+}
+
+func TestNewSignatureError(t *testing.T) {
+	_, err := NewSignature(make([]byte, 32))
+	if err == nil {
+		t.Error("expected error for wrong size")
+	}
+}
+
+func TestMustNewSignaturePanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic for wrong size")
+		}
+	}()
+	MustNewSignature(make([]byte, 32))
 }
 
 func TestPublicKeyEqual(t *testing.T) {
 	data1 := make([]byte, 32)
 	data2 := make([]byte, 32)
 
-	pk1 := NewPublicKey(data1)
-	pk2 := NewPublicKey(data2)
+	pk1 := MustNewPublicKey(data1)
+	pk2 := MustNewPublicKey(data2)
 
 	if !PublicKeyEqual(pk1, pk2) {
 		t.Error("equal public keys should be equal")
 	}
 
 	data2[0] = 1
-	pk3 := NewPublicKey(data2)
+	pk3 := MustNewPublicKey(data2)
 	if PublicKeyEqual(pk1, pk3) {
 		t.Error("different public keys should not be equal")
 	}

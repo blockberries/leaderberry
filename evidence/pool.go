@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"sync"
@@ -320,9 +321,11 @@ func voteKey(vote *gen.Vote) string {
 		vote.Type)
 }
 
-// evidenceKey returns a unique key for evidence
+// evidenceKey returns a unique key for evidence.
+// Includes hash of data to avoid collisions with same type/height/time.
 func evidenceKey(ev *gen.Evidence) string {
-	return fmt.Sprintf("%d/%d/%d", ev.Type, ev.Height, ev.Time)
+	dataHash := sha256.Sum256(ev.Data)
+	return fmt.Sprintf("%d/%d/%d/%x", ev.Type, ev.Height, ev.Time, dataHash[:8])
 }
 
 // votesForSameBlock checks if two votes are for the same block

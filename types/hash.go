@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 
 	gen "github.com/blockberries/leaderberry/types/generated"
 )
@@ -14,12 +15,32 @@ type Signature = gen.Signature
 type PublicKey = gen.PublicKey
 type Timestamp = gen.Timestamp
 
-// NewHash creates a Hash from bytes
-func NewHash(data []byte) Hash {
-	if len(data) != 32 {
-		panic("hash must be 32 bytes")
+// HashSize is the expected size of a hash in bytes
+const HashSize = 32
+
+// SignatureSize is the expected size of a signature in bytes
+const SignatureSize = 64
+
+// PublicKeySize is the expected size of a public key in bytes
+const PublicKeySize = 32
+
+// NewHash creates a Hash from bytes, returning error if invalid.
+// Use for untrusted input (network, files).
+func NewHash(data []byte) (Hash, error) {
+	if len(data) != HashSize {
+		return Hash{}, fmt.Errorf("hash must be %d bytes, got %d", HashSize, len(data))
 	}
-	return Hash{Data: data}
+	return Hash{Data: data}, nil
+}
+
+// MustNewHash creates a Hash, panicking if invalid.
+// Use only for trusted internal data.
+func MustNewHash(data []byte) Hash {
+	h, err := NewHash(data)
+	if err != nil {
+		panic(err)
+	}
+	return h
 }
 
 // HashBytes computes SHA-256 hash of data
@@ -56,20 +77,42 @@ func HashString(h Hash) string {
 	return hex.EncodeToString(h.Data)
 }
 
-// NewSignature creates a Signature from bytes
-func NewSignature(data []byte) Signature {
-	if len(data) != 64 {
-		panic("signature must be 64 bytes")
+// NewSignature creates a Signature from bytes, returning error if invalid.
+// Use for untrusted input (network, files).
+func NewSignature(data []byte) (Signature, error) {
+	if len(data) != SignatureSize {
+		return Signature{}, fmt.Errorf("signature must be %d bytes, got %d", SignatureSize, len(data))
 	}
-	return Signature{Data: data}
+	return Signature{Data: data}, nil
 }
 
-// NewPublicKey creates a PublicKey from bytes
-func NewPublicKey(data []byte) PublicKey {
-	if len(data) != 32 {
-		panic("public key must be 32 bytes")
+// MustNewSignature creates a Signature, panicking if invalid.
+// Use only for trusted internal data (e.g., crypto library output).
+func MustNewSignature(data []byte) Signature {
+	s, err := NewSignature(data)
+	if err != nil {
+		panic(err)
 	}
-	return PublicKey{Data: data}
+	return s
+}
+
+// NewPublicKey creates a PublicKey from bytes, returning error if invalid.
+// Use for untrusted input (network, files).
+func NewPublicKey(data []byte) (PublicKey, error) {
+	if len(data) != PublicKeySize {
+		return PublicKey{}, fmt.Errorf("public key must be %d bytes, got %d", PublicKeySize, len(data))
+	}
+	return PublicKey{Data: data}, nil
+}
+
+// MustNewPublicKey creates a PublicKey, panicking if invalid.
+// Use only for trusted internal data.
+func MustNewPublicKey(data []byte) PublicKey {
+	p, err := NewPublicKey(data)
+	if err != nil {
+		panic(err)
+	}
+	return p
 }
 
 // PublicKeyEqual compares two public keys

@@ -74,7 +74,7 @@ func makeTestValidatorSet(t *testing.T, names []string, powers []int64) *types.V
 		vals[i] = &types.NamedValidator{
 			Name:        types.NewAccountName(name),
 			Index:       uint16(i),
-			PublicKey:   types.NewPublicKey(pubKey),
+			PublicKey:   types.MustNewPublicKey(pubKey),
 			VotingPower: powers[i],
 		}
 	}

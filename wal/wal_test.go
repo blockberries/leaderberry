@@ -44,10 +44,10 @@ func TestFileWALBasic(t *testing.T) {
 		t.Fatalf("failed to stop WAL: %v", err)
 	}
 
-	// Verify file exists
-	walPath := filepath.Join(dir, "wal")
+	// Verify segment file exists (now using segmented format: wal-00000)
+	walPath := filepath.Join(dir, "wal-00000")
 	if _, err := os.Stat(walPath); os.IsNotExist(err) {
-		t.Error("WAL file should exist")
+		t.Error("WAL segment file should exist")
 	}
 }
 

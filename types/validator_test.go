@@ -167,18 +167,21 @@ func TestValidatorSetCopy(t *testing.T) {
 	}
 
 	vs, _ := NewValidatorSet(vals)
-	copy := vs.Copy()
+	vsCopy, err := vs.Copy()
+	if err != nil {
+		t.Fatalf("Copy failed: %v", err)
+	}
 
-	if copy.Size() != vs.Size() {
+	if vsCopy.Size() != vs.Size() {
 		t.Error("copy should have same size")
 	}
 
-	if copy.TotalPower != vs.TotalPower {
+	if vsCopy.TotalPower != vs.TotalPower {
 		t.Error("copy should have same total power")
 	}
 
 	// Modifying copy shouldn't affect original
-	copy.IncrementProposerPriority(1)
+	vsCopy.IncrementProposerPriority(1)
 	// Original proposer priorities should be unchanged
 }
 

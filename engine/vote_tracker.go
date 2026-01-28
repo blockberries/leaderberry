@@ -20,6 +20,9 @@ type VoteSet struct {
 	votesByBlock map[string]*blockVotes
 	sum          int64
 	maj23        *blockVotes
+
+	// Peer claims of 2/3+ majority (used for POL validation and vote requesting)
+	peerMaj23 map[string]*types.Hash // peerID -> claimed block hash
 }
 
 type blockVotes struct {
@@ -188,12 +191,54 @@ func (vs *VoteSet) GetVotesForBlock(blockHash *types.Hash) []*gen.Vote {
 	return votes
 }
 
-// MakeCommit creates a Commit from 2/3+ precommits
+// SetPeerMaj23 records that a peer claims to have seen 2/3+ votes for a block.
+// This is used for proof-of-lock validation and requesting missing votes.
+func (vs *VoteSet) SetPeerMaj23(peerID string, blockHash *types.Hash) {
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+
+	if vs.peerMaj23 == nil {
+		vs.peerMaj23 = make(map[string]*types.Hash)
+	}
+	vs.peerMaj23[peerID] = blockHash
+}
+
+// GetPeerMaj23Claims returns all peer claims of 2/3+ majority.
+// Returns a copy of the map to avoid race conditions.
+func (vs *VoteSet) GetPeerMaj23Claims() map[string]*types.Hash {
+	vs.mu.RLock()
+	defer vs.mu.RUnlock()
+
+	if vs.peerMaj23 == nil {
+		return nil
+	}
+
+	result := make(map[string]*types.Hash, len(vs.peerMaj23))
+	for k, v := range vs.peerMaj23 {
+		result[k] = v
+	}
+	return result
+}
+
+// HasPeerMaj23 returns true if any peer has claimed 2/3+ for a block.
+func (vs *VoteSet) HasPeerMaj23() bool {
+	vs.mu.RLock()
+	defer vs.mu.RUnlock()
+	return len(vs.peerMaj23) > 0
+}
+
+// MakeCommit creates a Commit from 2/3+ precommits.
+// Returns nil if there's no 2/3+ majority for a non-nil block.
 func (vs *VoteSet) MakeCommit() *gen.Commit {
 	vs.mu.RLock()
 	defer vs.mu.RUnlock()
 
 	if vs.voteType != types.VoteTypePrecommit || vs.maj23 == nil {
+		return nil
+	}
+
+	// Cannot create commit for nil block
+	if vs.maj23.blockHash == nil || types.IsHashEmpty(vs.maj23.blockHash) {
 		return nil
 	}
 
@@ -308,11 +353,10 @@ func (hvs *HeightVoteSet) Precommits(round int32) *VoteSet {
 	return hvs.precommits[round]
 }
 
-// SetPeerMaj23 records that a peer claims to have seen 2/3+ prevotes for a block
-// This is used for proof-of-lock validation
-func (hvs *HeightVoteSet) SetPeerMaj23(round int32, voteType gen.VoteType, blockHash *types.Hash) {
+// SetPeerMaj23 records that a peer claims to have seen 2/3+ votes for a block.
+// This is used for proof-of-lock validation and requesting missing votes.
+func (hvs *HeightVoteSet) SetPeerMaj23(peerID string, round int32, voteType gen.VoteType, blockHash *types.Hash) {
 	hvs.mu.Lock()
-	defer hvs.mu.Unlock()
 
 	var voteSet *VoteSet
 	if voteType == types.VoteTypePrevote {
@@ -329,8 +373,10 @@ func (hvs *HeightVoteSet) SetPeerMaj23(round int32, voteType gen.VoteType, block
 		}
 	}
 
-	// Record the peer's claim (we'll verify when we receive votes)
-	_ = voteSet // Could store peer claims for later verification
+	hvs.mu.Unlock()
+
+	// Record the peer's claim on the vote set
+	voteSet.SetPeerMaj23(peerID, blockHash)
 }
 
 // Height returns the height

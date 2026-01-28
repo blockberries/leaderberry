@@ -11,6 +11,16 @@ import (
 	gen "github.com/blockberries/leaderberry/types/generated"
 )
 
+// ConsensusMessageType identifies the type of consensus message
+type ConsensusMessageType uint8
+
+const (
+	// ConsensusMessageTypeProposal identifies a proposal message
+	ConsensusMessageTypeProposal ConsensusMessageType = 1
+	// ConsensusMessageTypeVote identifies a vote message
+	ConsensusMessageTypeVote ConsensusMessageType = 2
+)
+
 // Engine is the main consensus engine that implements the BFT consensus protocol
 type Engine struct {
 	mu sync.RWMutex
@@ -219,24 +229,58 @@ func (e *Engine) ChainID() string {
 // --- BFTConsensus Interface Implementation ---
 // These methods can be used to integrate with blockberry
 
-// HandleConsensusMessage handles a consensus message from the network
+// HandleConsensusMessage handles a consensus message from the network.
+// Messages must be prefixed with a single byte indicating the message type.
 func (e *Engine) HandleConsensusMessage(peerID string, data []byte) error {
-	// Decode polymorphic message
-	// Try to decode as different message types
+	if len(data) < 2 {
+		return ErrInvalidMessage
+	}
 
-	// Try Proposal
-	proposal := &gen.Proposal{}
-	if err := proposal.UnmarshalCramberry(data); err == nil && proposal.Height > 0 {
+	msgType := ConsensusMessageType(data[0])
+	payload := data[1:]
+
+	switch msgType {
+	case ConsensusMessageTypeProposal:
+		proposal := &gen.Proposal{}
+		if err := proposal.UnmarshalCramberry(payload); err != nil {
+			return fmt.Errorf("%w: failed to unmarshal proposal: %v", ErrInvalidMessage, err)
+		}
 		return e.AddProposal(proposal)
-	}
 
-	// Try Vote
-	vote := &gen.Vote{}
-	if err := vote.UnmarshalCramberry(data); err == nil && vote.Height > 0 {
+	case ConsensusMessageTypeVote:
+		vote := &gen.Vote{}
+		if err := vote.UnmarshalCramberry(payload); err != nil {
+			return fmt.Errorf("%w: failed to unmarshal vote: %v", ErrInvalidMessage, err)
+		}
 		return e.AddVote(vote)
-	}
 
-	return ErrInvalidBlock
+	default:
+		return fmt.Errorf("%w: %d", ErrUnknownMessageType, msgType)
+	}
+}
+
+// EncodeProposalMessage encodes a proposal with its type prefix for network transmission
+func EncodeProposalMessage(proposal *gen.Proposal) ([]byte, error) {
+	payload, err := proposal.MarshalCramberry()
+	if err != nil {
+		return nil, err
+	}
+	msg := make([]byte, 1+len(payload))
+	msg[0] = byte(ConsensusMessageTypeProposal)
+	copy(msg[1:], payload)
+	return msg, nil
+}
+
+// EncodeVoteMessage encodes a vote with its type prefix for network transmission
+func EncodeVoteMessage(vote *gen.Vote) ([]byte, error) {
+	payload, err := vote.MarshalCramberry()
+	if err != nil {
+		return nil, err
+	}
+	msg := make([]byte, 1+len(payload))
+	msg[0] = byte(ConsensusMessageTypeVote)
+	copy(msg[1:], payload)
+	return msg, nil
 }
 
 // BroadcastProposal broadcasts a proposal to all peers

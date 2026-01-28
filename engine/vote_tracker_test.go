@@ -13,7 +13,7 @@ func makeTestValidator(name string, index uint16, power int64) *types.NamedValid
 	return &types.NamedValidator{
 		Name:        types.NewAccountName(name),
 		Index:       index,
-		PublicKey:   types.NewPublicKey(pubKey),
+		PublicKey:   types.MustNewPublicKey(pubKey),
 		VotingPower: power,
 	}
 }

@@ -1,6 +1,8 @@
 package types
 
 import (
+	"fmt"
+
 	gen "github.com/blockberries/leaderberry/types/generated"
 )
 
@@ -22,7 +24,10 @@ func ProposalSignBytes(chainID string, p *Proposal) []byte {
 	}
 
 	// Prepend chain ID
-	data, _ := canonical.MarshalCramberry()
+	data, err := canonical.MarshalCramberry()
+	if err != nil {
+		panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to marshal proposal for signing: %v", err))
+	}
 	return append([]byte(chainID), data...)
 }
 
