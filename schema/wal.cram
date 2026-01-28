@@ -1,0 +1,73 @@
+// Write-ahead log types for crash recovery and double-sign prevention
+
+package leaderberry;
+
+import "types.cram";
+import "vote.cram";
+import "proposal.cram";
+
+option go_package = "github.com/blockberries/leaderberry/types/generated";
+
+/// WALMsgType identifies WAL message types
+enum WALMsgType {
+    WAL_MSG_UNKNOWN = 0;
+    WAL_MSG_PROPOSAL = 1;
+    WAL_MSG_VOTE = 2;
+    WAL_MSG_COMMIT = 3;
+    WAL_MSG_END_HEIGHT = 4;
+    WAL_MSG_STATE = 5;
+    WAL_MSG_TIMEOUT = 6;
+}
+
+/// RoundStepType identifies consensus round steps
+enum RoundStepType {
+    ROUND_STEP_NEW_HEIGHT = 0;
+    ROUND_STEP_NEW_ROUND = 1;
+    ROUND_STEP_PROPOSE = 2;
+    ROUND_STEP_PREVOTE = 3;
+    ROUND_STEP_PREVOTE_WAIT = 4;
+    ROUND_STEP_PRECOMMIT = 5;
+    ROUND_STEP_PRECOMMIT_WAIT = 6;
+    ROUND_STEP_COMMIT = 7;
+}
+
+/// WALMessage is a write-ahead log entry
+message WALMessage {
+    WALMsgType type = 1;
+    int64 height = 2;
+    int32 round = 3;
+    /// Serialized message data (type-specific)
+    bytes data = 4;
+}
+
+/// EndHeightMessage marks the end of a height in WAL
+message EndHeightMessage {
+    int64 height = 1;
+}
+
+/// TimeoutMessage records a timeout event
+message TimeoutMessage {
+    int64 height = 1;
+    int32 round = 2;
+    RoundStepType step = 3;
+}
+
+/// ConsensusStateData is the serializable consensus state for WAL
+message ConsensusStateData {
+    int64 height = 1;
+    int32 round = 2;
+    RoundStepType step = 3;
+    int32 locked_round = 4;
+    *Hash locked_block_hash = 5;
+    int32 valid_round = 6;
+    *Hash valid_block_hash = 7;
+}
+
+/// LastSignState tracks the last signed vote for double-sign prevention
+message LastSignState {
+    int64 height = 1;
+    int32 round = 2;
+    int8 step = 3;
+    *Hash block_hash = 4;
+    Signature signature = 5;
+}

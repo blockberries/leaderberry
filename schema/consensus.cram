@@ -1,0 +1,15 @@
+// Consensus message interface for polymorphic handling
+
+package leaderberry;
+
+import "vote.cram";
+import "proposal.cram";
+
+option go_package = "github.com/blockberries/leaderberry/types/generated";
+
+/// ConsensusMessage is a polymorphic interface for all consensus messages
+interface ConsensusMessage {
+    128 = Proposal;
+    129 = Vote;
+    130 = Commit;
+}

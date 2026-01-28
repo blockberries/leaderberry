@@ -1,0 +1,54 @@
+// Blocks for BFT consensus with Looseberry DAG integration
+
+package leaderberry;
+
+import "types.cram";
+import "account.cram";
+import "vote.cram";
+
+option go_package = "github.com/blockberries/leaderberry/types/generated";
+
+/// BatchCertRef references a Looseberry batch certificate
+message BatchCertRef {
+    required Hash certificate_digest = 1;
+    uint64 round = 2;
+    required AccountName validator = 3;
+}
+
+/// BlockHeader contains block metadata
+message BlockHeader {
+    /// Chain identity
+    string chain_id = 1;
+    int64 height = 2;
+    int64 time = 3;
+
+    /// Previous block
+    *Hash last_block_hash = 4;
+    *Hash last_commit_hash = 5;
+
+    /// State roots
+    *Hash validators_hash = 6;
+    *Hash app_hash = 7;
+    *Hash consensus_hash = 8;
+
+    /// DAG mempool integration
+    uint64 dag_round = 9;
+    repeated BatchCertRef batch_cert_refs = 10;
+
+    /// Proposer - identified by name
+    required AccountName proposer = 11;
+}
+
+/// BlockData contains the block body
+message BlockData {
+    /// References to Looseberry batch certificates
+    repeated Hash batch_digests = 1;
+}
+
+/// Block is a complete consensus block
+message Block {
+    required BlockHeader header = 1;
+    BlockData data = 2;
+    repeated bytes evidence = 3;
+    *Commit last_commit = 4;
+}

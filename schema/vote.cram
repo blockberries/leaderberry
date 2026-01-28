@@ -1,0 +1,47 @@
+// Votes and commits for BFT consensus
+
+package leaderberry;
+
+import "types.cram";
+import "account.cram";
+
+option go_package = "github.com/blockberries/leaderberry/types/generated";
+
+/// VoteType distinguishes prevotes from precommits
+enum VoteType {
+    VOTE_TYPE_UNKNOWN = 0;
+    VOTE_TYPE_PREVOTE = 1;
+    VOTE_TYPE_PRECOMMIT = 2;
+}
+
+/// Vote represents a consensus vote
+message Vote {
+    VoteType type = 1;
+    int64 height = 2;
+    int32 round = 3;
+    /// Hash of the block being voted for (empty = nil vote)
+    *Hash block_hash = 4;
+    int64 timestamp = 5;
+    /// Validator name (not address)
+    required AccountName validator = 6;
+    /// Validator index for efficient lookup
+    uint16 validator_index = 7;
+    Signature signature = 8;
+}
+
+/// CommitSig is a precommit signature in a Commit
+message CommitSig {
+    uint16 validator_index = 1;
+    Signature signature = 2;
+    int64 timestamp = 3;
+    /// Empty if validator did not commit
+    *Hash block_hash = 4;
+}
+
+/// Commit aggregates 2/3+ precommits for a block
+message Commit {
+    int64 height = 1;
+    int32 round = 2;
+    required Hash block_hash = 3;
+    repeated CommitSig signatures = 4;
+}

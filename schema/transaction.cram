@@ -1,0 +1,46 @@
+// Transaction wrapper - consensus is transaction-content agnostic
+// Payload is opaque bytes interpreted by the application layer
+
+package leaderberry;
+
+import "types.cram";
+import "account.cram";
+
+option go_package = "github.com/blockberries/leaderberry/types/generated";
+
+/// SignatureProof is a direct signature from a key
+message SignatureProof {
+    required PublicKey public_key = 1;
+    required Signature signature = 2;
+}
+
+/// AccountAuthorization is a delegated authorization from another account
+message AccountAuthorization {
+    /// The account providing authorization
+    required AccountName account = 1;
+    /// That account's authorization (recursive)
+    required Authorization authorization = 2;
+}
+
+/// Authorization provides hierarchical proof of authority
+message Authorization {
+    /// Direct signatures from keys
+    repeated SignatureProof signatures = 1;
+    /// Delegated authorizations from accounts
+    repeated AccountAuthorization account_authorizations = 2;
+}
+
+/// Transaction wraps an opaque payload with authorization metadata.
+/// The consensus engine verifies authorizations but does not interpret the payload.
+message Transaction {
+    /// Opaque payload - interpreted by application layer, not consensus
+    required bytes payload = 1;
+    /// Account authorizing this transaction
+    required AccountName account = 2;
+    /// Proof of authorization (signatures, delegations)
+    required Authorization authorization = 3;
+    /// Sequence number for replay protection
+    uint64 nonce = 4;
+    /// Unix timestamp after which tx is invalid (optional)
+    int64 expiration = 5;
+}

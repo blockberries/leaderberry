@@ -1,0 +1,30 @@
+// Core types for Leaderberry consensus engine
+
+package leaderberry;
+
+option go_package = "github.com/blockberries/leaderberry/types/generated";
+
+/// Hash is a 32-byte SHA-256 hash
+message Hash {
+    required bytes data = 1;
+}
+
+/// Signature is a 64-byte Ed25519 signature
+message Signature {
+    required bytes data = 1;
+}
+
+/// PublicKey is a 32-byte Ed25519 public key
+message PublicKey {
+    required bytes data = 1;
+}
+
+/// AccountName is a human-readable account identifier
+message AccountName {
+    required string name = 1;
+}
+
+/// Timestamp in Unix nanoseconds
+message Timestamp {
+    int64 nanos = 1;
+}

@@ -1,0 +1,39 @@
+// Named accounts with hierarchical multi-sig authorization
+
+package leaderberry;
+
+import "types.cram";
+
+option go_package = "github.com/blockberries/leaderberry/types/generated";
+
+/// KeyWeight associates a public key with a weight for multi-sig
+message KeyWeight {
+    required PublicKey public_key = 1;
+    uint32 weight = 2;
+}
+
+/// AccountWeight associates an account with a weight for delegation
+message AccountWeight {
+    required AccountName account = 1;
+    uint32 weight = 2;
+}
+
+/// Authority defines multi-sig requirements for an account
+message Authority {
+    /// Minimum weight required to authorize
+    uint32 threshold = 1;
+    /// Direct key authorizations
+    repeated KeyWeight keys = 2;
+    /// Delegated account authorizations
+    repeated AccountWeight accounts = 3;
+}
+
+/// Account represents a named account with multi-sig authority
+message Account {
+    required AccountName name = 1;
+    uint64 id = 2;
+    required Authority authority = 3;
+    int64 created_at = 4;
+    int64 updated_at = 5;
+    map[string]bytes metadata = 6;
+}

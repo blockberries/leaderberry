@@ -1,0 +1,29 @@
+// Block proposals for BFT consensus
+
+package leaderberry;
+
+import "types.cram";
+import "account.cram";
+import "block.cram";
+import "vote.cram";
+
+option go_package = "github.com/blockberries/leaderberry/types/generated";
+
+/// Proposal is a block proposal from the round's proposer
+message Proposal {
+    int64 height = 1;
+    int32 round = 2;
+    int64 timestamp = 3;
+
+    /// The proposed block
+    required Block block = 4;
+
+    /// Proof-of-Lock round (-1 if none)
+    int32 pol_round = 5;
+    /// 2/3+ prevotes from POLRound (empty if pol_round == -1)
+    repeated Vote pol_votes = 6;
+
+    /// Proposer identification
+    required AccountName proposer = 7;
+    Signature signature = 8;
+}

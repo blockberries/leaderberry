@@ -1,0 +1,49 @@
+# Binaries
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+CLAUDE.md
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+coverage.out
+coverage.html
+*.coverprofile
+
+# Dependency directories
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.log
+tmp/
+
+# Generated files
+*.gen.go
+*.gen.ts
+*.gen.rs
+
+# Rust
+rust/target/
+tests/integration/rust/target/
+
+# TypeScript/Node
+typescript/node_modules/
+typescript/dist/
+typescript/*.tsbuildinfo
+tests/integration/ts/node_modules/

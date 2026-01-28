@@ -1,0 +1,29 @@
+// Named validators for BFT consensus
+
+package leaderberry;
+
+import "types.cram";
+import "account.cram";
+
+option go_package = "github.com/blockberries/leaderberry/types/generated";
+
+/// NamedValidator represents a validator identified by name
+message NamedValidator {
+    /// Human-readable validator name
+    required AccountName name = 1;
+    /// Position in validator set (for efficient indexing)
+    uint16 index = 2;
+    /// Ed25519 public key for consensus messages
+    required PublicKey public_key = 3;
+    /// Voting power
+    int64 voting_power = 4;
+    /// Proposer selection priority
+    int64 proposer_priority = 5;
+}
+
+/// ValidatorSetData is the serializable form of ValidatorSet
+message ValidatorSetData {
+    repeated NamedValidator validators = 1;
+    uint16 proposer_index = 2;
+    int64 total_power = 3;
+}
