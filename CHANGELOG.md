@@ -6,6 +6,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-01-28 - Second Refactor Phase 2
+
+Additional high, medium, and low severity fixes from comprehensive code review.
+
+### High Severity Fixes (H3-H6)
+
+#### H3: ScheduleTimeout Non-Blocking
+- `ScheduleTimeout` now uses non-blocking send with select
+- Drops timeouts if channel is full (logged with counter)
+- Prevents caller from hanging indefinitely
+
+#### H4: TimeoutTicker.Stop Waits for Goroutine
+- Added `sync.WaitGroup` to track goroutine lifecycle
+- `Stop()` now waits for `run()` goroutine to exit
+- Prevents use-after-close and dangling callbacks
+
+#### H5: TwoThirdsMajority Overflow Protection
+- Reordered calculation to avoid `TotalPower * 2` overflow
+- Uses `(total/3 + total/3 + adjustment)` pattern
+- Mathematically equivalent but overflow-safe
+
+#### H6: WAL Legacy Migration Error Handling
+- `findHighestSegmentIndex` now returns error on migration failure
+- Prevents silent data loss if rename fails
+- Logs migration success for debugging
+
+### Medium Severity Fixes (M1, M5)
+
+#### M1: Deep Copy in ValidatorSet.Copy
+- `CopyAccountName()` helper for deep copying AccountName
+- `ValidatorSet.Copy()` now deep copies Name and PublicKey.Data
+- Prevents shared references between copies
+
+#### M5: GetAddress Returns Copy
+- `FilePV.GetAddress()` now returns a copy of the address bytes
+- Prevents callers from modifying internal state
+
+### Low Severity Fixes (L1, L3)
+
+#### L1: Hex Encoding for Block Hash Keys
+- `blockHashKey()` now uses `hex.EncodeToString` instead of raw binary
+- Improves debuggability of vote tracking
+- Returns "nil" for nil/empty hashes instead of empty string
+
+#### L3: Use sort.Ints for WAL Segments
+- Replaced O(n²) bubble sort with `sort.Ints()`
+- Standard library implementation is more efficient
+
+### Added
+- `DroppedSchedules()` method to TimeoutTicker for monitoring
+- `CopyAccountName()` helper function in types package
+
 ## [0.3.0] - 2026-01-28 - Second Refactor Phase 1
 
 Critical fixes for deadlocks, data races, and consensus safety identified during comprehensive code review.

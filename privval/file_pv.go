@@ -386,13 +386,19 @@ func (pv *FilePV) GetPubKey() types.PublicKey {
 }
 
 // GetAddress returns the validator address
+// M5: Returns a copy to prevent callers from modifying internal state
 func (pv *FilePV) GetAddress() []byte {
 	// For now, just return the first 20 bytes of the public key
 	// In production, this would typically be a hash
+	var addr []byte
 	if len(pv.pubKey.Data) >= 20 {
-		return pv.pubKey.Data[:20]
+		addr = make([]byte, 20)
+		copy(addr, pv.pubKey.Data[:20])
+	} else {
+		addr = make([]byte, len(pv.pubKey.Data))
+		copy(addr, pv.pubKey.Data)
 	}
-	return pv.pubKey.Data
+	return addr
 }
 
 // SignVote signs a vote, checking for double-sign

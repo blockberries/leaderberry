@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 )
 
@@ -79,7 +81,12 @@ func (w *FileWAL) Start() error {
 	w.heightIndex = make(map[int64]int)
 
 	// Find existing segments and determine the highest index
-	w.segmentIndex = w.findHighestSegmentIndex()
+	// H6: Check for migration errors
+	idx, err := w.findHighestSegmentIndex()
+	if err != nil {
+		return fmt.Errorf("failed to find WAL segments: %w", err)
+	}
+	w.segmentIndex = idx
 	w.group.MinIndex = w.findLowestSegmentIndex()
 	w.group.MaxIndex = w.segmentIndex
 
@@ -130,24 +137,26 @@ func (w *FileWAL) buildIndex() error {
 }
 
 // findHighestSegmentIndex finds the highest segment index in the WAL directory
-func (w *FileWAL) findHighestSegmentIndex() int {
+// H6: Returns error if legacy migration fails (prevents silent data loss)
+func (w *FileWAL) findHighestSegmentIndex() (int, error) {
 	// Check for legacy "wal" file first
 	legacyPath := filepath.Join(w.dir, "wal")
 	if _, err := os.Stat(legacyPath); err == nil {
 		// Migrate legacy file to segment-0
 		newPath := w.segmentPath(0)
-		if err := os.Rename(legacyPath, newPath); err == nil {
-			return 0
+		if err := os.Rename(legacyPath, newPath); err != nil {
+			// H6: Return error on migration failure instead of silently continuing
+			return 0, fmt.Errorf("failed to migrate legacy WAL file: %w", err)
 		}
-		// If rename fails, just use segment-0
-		return 0
+		log.Printf("INFO: migrated legacy WAL to segmented format")
+		return 0, nil
 	}
 
 	// Find highest numbered segment
 	highest := -1
 	entries, err := os.ReadDir(w.dir)
 	if err != nil {
-		return 0
+		return 0, nil // Directory doesn't exist yet, that's fine
 	}
 
 	for _, entry := range entries {
@@ -160,9 +169,9 @@ func (w *FileWAL) findHighestSegmentIndex() int {
 	}
 
 	if highest < 0 {
-		return 0
+		return 0, nil
 	}
-	return highest
+	return highest, nil
 }
 
 // findLowestSegmentIndex finds the lowest segment index in the WAL directory
@@ -676,14 +685,8 @@ func findSegments(dir string) []int {
 		}
 	}
 
-	// Sort segments by index
-	for i := 0; i < len(segments)-1; i++ {
-		for j := i + 1; j < len(segments); j++ {
-			if segments[i] > segments[j] {
-				segments[i], segments[j] = segments[j], segments[i]
-			}
-		}
-	}
+	// L3: Sort segments by index using standard library
+	sort.Ints(segments)
 
 	return segments
 }

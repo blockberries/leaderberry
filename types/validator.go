@@ -165,8 +165,25 @@ func (vs *ValidatorSet) Size() int {
 }
 
 // TwoThirdsMajority returns the voting power needed for 2/3+ majority
+// H5: Overflow-safe calculation - avoids TotalPower * 2 which could overflow
 func (vs *ValidatorSet) TwoThirdsMajority() int64 {
-	return (vs.TotalPower * 2 / 3) + 1
+	// Avoid overflow by dividing first, then adjusting
+	// 2/3 majority means > 2/3, so we need (2*total/3) + 1
+	// Rewrite as: total/3 + total/3 + adjustment for remainder
+
+	third := vs.TotalPower / 3
+	remainder := vs.TotalPower % 3
+
+	// 2/3 = third + third
+	twoThirds := third + third
+
+	// If there's a remainder of 2, we need to add 1 more to get true 2/3
+	if remainder == 2 {
+		twoThirds++
+	}
+
+	// +1 to require strictly greater than 2/3
+	return twoThirds + 1
 }
 
 // IncrementProposerPriority updates priorities and selects next proposer
@@ -220,14 +237,25 @@ func (vs *ValidatorSet) WithIncrementedPriority(times int32) (*ValidatorSet, err
 }
 
 // Copy creates a deep copy of the validator set.
+// M1: Deep copies AccountName and PublicKey.Data to avoid shared references.
 // Returns error if the copy operation fails (should never happen for valid sets).
 func (vs *ValidatorSet) Copy() (*ValidatorSet, error) {
 	validators := make([]*NamedValidator, len(vs.Validators))
 	for i, v := range vs.Validators {
+		// M1: Deep copy Name (has *string that could be shared)
+		nameCopy := CopyAccountName(v.Name)
+
+		// M1: Deep copy PublicKey.Data
+		var pubKeyCopy PublicKey
+		if len(v.PublicKey.Data) > 0 {
+			pubKeyCopy.Data = make([]byte, len(v.PublicKey.Data))
+			copy(pubKeyCopy.Data, v.PublicKey.Data)
+		}
+
 		validators[i] = &NamedValidator{
-			Name:             v.Name,
+			Name:             nameCopy,
 			Index:            v.Index,
-			PublicKey:        v.PublicKey,
+			PublicKey:        pubKeyCopy,
 			VotingPower:      v.VotingPower,
 			ProposerPriority: v.ProposerPriority,
 		}

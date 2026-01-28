@@ -71,8 +71,12 @@ type TimeoutTicker struct {
 	stopCh   chan struct{}
 	running  bool
 
+	// H4: WaitGroup to track goroutine for clean shutdown
+	wg sync.WaitGroup
+
 	// Metrics
-	droppedTimeouts uint64
+	droppedTimeouts  uint64
+	droppedSchedules uint64
 }
 
 // NewTimeoutTicker creates a new TimeoutTicker
@@ -86,6 +90,7 @@ func NewTimeoutTicker(config TimeoutConfig) *TimeoutTicker {
 }
 
 // Start starts the timeout ticker
+// H4: Uses WaitGroup to track goroutine lifecycle
 func (tt *TimeoutTicker) Start() {
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
@@ -94,16 +99,18 @@ func (tt *TimeoutTicker) Start() {
 		return
 	}
 	tt.running = true
+	tt.stopCh = make(chan struct{}) // Fresh channel for each start
 
+	tt.wg.Add(1)
 	go tt.run()
 }
 
 // Stop stops the timeout ticker
+// H4: Waits for goroutine to finish before returning
 func (tt *TimeoutTicker) Stop() {
 	tt.mu.Lock()
-	defer tt.mu.Unlock()
-
 	if !tt.running {
+		tt.mu.Unlock()
 		return
 	}
 	tt.running = false
@@ -112,6 +119,10 @@ func (tt *TimeoutTicker) Stop() {
 	if tt.timer != nil {
 		tt.timer.Stop()
 	}
+	tt.mu.Unlock()
+
+	// Wait for goroutine to finish
+	tt.wg.Wait()
 }
 
 // Chan returns the channel that delivers timeout events
@@ -120,11 +131,22 @@ func (tt *TimeoutTicker) Chan() <-chan TimeoutInfo {
 }
 
 // ScheduleTimeout schedules a new timeout
+// H3: Non-blocking send to prevent caller from hanging forever
 func (tt *TimeoutTicker) ScheduleTimeout(ti TimeoutInfo) {
-	tt.tickCh <- ti
+	select {
+	case tt.tickCh <- ti:
+		// Successfully scheduled
+	default:
+		// Channel full - log and drop (timeout will be rescheduled on next state transition)
+		count := atomic.AddUint64(&tt.droppedSchedules, 1)
+		log.Printf("WARN: timeout schedule dropped due to full channel: height=%d round=%d step=%d total_dropped=%d",
+			ti.Height, ti.Round, ti.Step, count)
+	}
 }
 
 func (tt *TimeoutTicker) run() {
+	defer tt.wg.Done() // H4: Signal goroutine completion
+
 	for {
 		select {
 		case <-tt.stopCh:
@@ -198,4 +220,9 @@ func (tt *TimeoutTicker) Commit() time.Duration {
 // DroppedTimeouts returns the number of timeouts dropped due to full channel
 func (tt *TimeoutTicker) DroppedTimeouts() uint64 {
 	return atomic.LoadUint64(&tt.droppedTimeouts)
+}
+
+// DroppedSchedules returns the number of schedule requests dropped due to full channel
+func (tt *TimeoutTicker) DroppedSchedules() uint64 {
+	return atomic.LoadUint64(&tt.droppedSchedules)
 }

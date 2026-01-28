@@ -52,6 +52,16 @@ func AccountNameEqual(a, b AccountName) bool {
 	return *a.Name == *b.Name
 }
 
+// CopyAccountName creates a deep copy of an AccountName
+// M1: Ensures the pointer to the string is not shared
+func CopyAccountName(a AccountName) AccountName {
+	if a.Name == nil {
+		return AccountName{}
+	}
+	nameCopy := *a.Name
+	return AccountName{Name: &nameCopy}
+}
+
 // VerifySignature verifies an Ed25519 signature
 func VerifySignature(pubKey PublicKey, message []byte, sig Signature) bool {
 	if len(pubKey.Data) != ed25519.PublicKeySize {

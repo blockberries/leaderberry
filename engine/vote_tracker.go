@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/hex"
 	"sync"
 
 	"github.com/blockberries/leaderberry/types"
@@ -263,11 +264,13 @@ func (vs *VoteSet) MakeCommit() *gen.Commit {
 
 // Helper functions
 
+// blockHashKey returns a string key for a block hash
+// L1: Use hex encoding for debuggability instead of raw binary string
 func blockHashKey(h *types.Hash) string {
 	if h == nil || types.IsHashEmpty(h) {
-		return "" // nil vote
+		return "nil"
 	}
-	return string(h.Data)
+	return hex.EncodeToString(h.Data)
 }
 
 func votesEqual(a, b *gen.Vote) bool {

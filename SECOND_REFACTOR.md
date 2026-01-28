@@ -1471,13 +1471,13 @@ Before marking complete:
 | Severity | Count | Status |
 |----------|-------|--------|
 | Critical | 5 | **DONE** |
-| High | 6 | 2 Done, 4 Pending |
-| Medium | 8 | 2 Done, 6 Pending |
-| Low | 6 | Pending |
+| High | 6 | **DONE** |
+| Medium | 8 | 4 Done, 4 Pending |
+| Low | 6 | 2 Done, 4 Pending |
 | Missing Functionality | 5 | Pending |
 
 **Total Issues**: 30
-**Completed**: 9
+**Completed**: 17
 
 ### Implemented in Phase 1
 - **CR1**: Deadlock fix - Added `Locked` pattern to all state transition functions
@@ -1490,11 +1490,23 @@ Before marking complete:
 - **M7**: enterCommit nil handling - PANIC if no commit found
 - **M8**: Broadcast callbacks - Added onProposal/onVote callback mechanism
 
+### Implemented in Phase 2
+- **H3**: ScheduleTimeout non-blocking send with logging
+- **H4**: TimeoutTicker.Stop waits for goroutine via WaitGroup
+- **H5**: TwoThirdsMajority overflow-safe calculation
+- **H6**: WAL legacy migration returns error on failure
+- **M1**: Deep copy AccountName in ValidatorSet.Copy
+- **M5**: GetAddress returns copy of bytes
+- **L1**: Hex encoding for block hash keys (debuggability)
+- **L3**: Use sort.Ints instead of bubble sort
+
 ### Remaining Work
-- H3: ScheduleTimeout blocking
-- H4: TimeoutTicker.Stop wait
-- H5: TwoThirdsMajority overflow
-- H6: WAL legacy migration fix
-- M1-M6: Medium severity issues
-- L1-L6: Low severity issues
+- M2: POL validation
+- M3: Evidence pool integration
+- M4: Message length check
+- M6: isSameVote signature check
+- L2: GC pressure in WAL decoder
+- L4: Evidence size estimate
+- L5: ValidatorSet hash nil name check
+- L6: centerPriorities precision loss (document only)
 - MF1-MF5: Missing functionality
