@@ -114,9 +114,9 @@ func NewConsensusState(
 // Start starts the consensus state machine at the given height
 func (cs *ConsensusState) Start(height int64, lastCommit *gen.Commit) error {
 	cs.mu.Lock()
-	defer cs.mu.Unlock()
 
 	if cs.started {
+		cs.mu.Unlock()
 		return ErrAlreadyStarted
 	}
 
@@ -133,7 +133,9 @@ func (cs *ConsensusState) Start(height int64, lastCommit *gen.Commit) error {
 	cs.wg.Add(1)
 	go cs.receiveRoutine()
 
-	// Enter new height
+	cs.mu.Unlock()
+
+	// Enter new height (outside lock to avoid deadlock)
 	cs.enterNewRound(height, 0)
 
 	return nil
