@@ -209,7 +209,8 @@ func (vs *VoteSet) GetVotes() []*gen.Vote {
 	return votes
 }
 
-// GetVotesForBlock returns all votes for a specific block hash
+// GetVotesForBlock returns all votes for a specific block hash.
+// TENTH_REFACTOR: Returns deep copies to prevent callers from modifying internal state.
 func (vs *VoteSet) GetVotesForBlock(blockHash *types.Hash) []*gen.Vote {
 	vs.mu.RLock()
 	defer vs.mu.RUnlock()
@@ -220,13 +221,18 @@ func (vs *VoteSet) GetVotesForBlock(blockHash *types.Hash) []*gen.Vote {
 		return nil
 	}
 
-	votes := make([]*gen.Vote, len(bv.votes))
-	copy(votes, bv.votes)
+	// TENTH_REFACTOR: Return deep copies like GetVotes() does.
+	// Previously used copy() which only copies pointers, not vote data.
+	votes := make([]*gen.Vote, 0, len(bv.votes))
+	for _, v := range bv.votes {
+		votes = append(votes, types.CopyVote(v))
+	}
 	return votes
 }
 
 // SetPeerMaj23 records that a peer claims to have seen 2/3+ votes for a block.
 // This is used for proof-of-lock validation and requesting missing votes.
+// TENTH_REFACTOR: Stores a copy of the hash to prevent caller modifications from corrupting state.
 func (vs *VoteSet) SetPeerMaj23(peerID string, blockHash *types.Hash) {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
@@ -234,11 +240,13 @@ func (vs *VoteSet) SetPeerMaj23(peerID string, blockHash *types.Hash) {
 	if vs.peerMaj23 == nil {
 		vs.peerMaj23 = make(map[string]*types.Hash)
 	}
-	vs.peerMaj23[peerID] = blockHash
+	// TENTH_REFACTOR: Store a copy to prevent caller from modifying internal state
+	vs.peerMaj23[peerID] = types.CopyHash(blockHash)
 }
 
 // GetPeerMaj23Claims returns all peer claims of 2/3+ majority.
 // Returns a copy of the map to avoid race conditions.
+// TENTH_REFACTOR: Returns deep copies of hashes to prevent callers from modifying internal state.
 func (vs *VoteSet) GetPeerMaj23Claims() map[string]*types.Hash {
 	vs.mu.RLock()
 	defer vs.mu.RUnlock()
@@ -249,7 +257,8 @@ func (vs *VoteSet) GetPeerMaj23Claims() map[string]*types.Hash {
 
 	result := make(map[string]*types.Hash, len(vs.peerMaj23))
 	for k, v := range vs.peerMaj23 {
-		result[k] = v
+		// TENTH_REFACTOR: Return copies to prevent callers from modifying internal state
+		result[k] = types.CopyHash(v)
 	}
 	return result
 }

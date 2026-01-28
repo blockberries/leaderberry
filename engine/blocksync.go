@@ -231,8 +231,14 @@ func (bs *BlockSyncer) UpdateTargetHeight() {
 		if bs.state == BlockSyncStateSyncing {
 			bs.state = BlockSyncStateCaughtUp
 			log.Printf("[INFO] blocksync: caught up at height %d", bs.currentHeight)
+			// TENTH_REFACTOR: Track callback goroutine with WaitGroup like ReceiveBlock does.
+			// Previously this goroutine wasn't tracked, causing race conditions on Stop().
 			if bs.onCaughtUp != nil {
-				go bs.onCaughtUp()
+				bs.wg.Add(1)
+				go func() {
+					defer bs.wg.Done()
+					bs.onCaughtUp()
+				}()
 			}
 		}
 	} else if bs.state == BlockSyncStateIdle || bs.state == BlockSyncStateCaughtUp {
