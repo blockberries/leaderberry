@@ -200,7 +200,13 @@ func (tt *TimeoutTicker) run() {
 //   round * delta_ns < math.MaxInt64 / time.Duration(1)
 func (tt *TimeoutTicker) calculateDuration(ti TimeoutInfo) time.Duration {
 	// M4: Clamp round to prevent overflow in duration calculation
+	// TWENTY_THIRD_REFACTOR: Also clamp negative rounds to 0 to prevent
+	// unexpectedly short timeouts. time.Duration(negative) would subtract
+	// from the base timeout, potentially causing premature timeout events.
 	round := ti.Round
+	if round < 0 {
+		round = 0
+	}
 	if round > MaxRoundForTimeout {
 		round = MaxRoundForTimeout
 	}

@@ -966,6 +966,14 @@ func (cs *ConsensusState) handlePrecommitLocked(vote *gen.Vote) {
 	// Check for 2/3+ precommits for a block
 	blockHash, ok := precommits.TwoThirdsMajority()
 	if ok && blockHash != nil && !types.IsHashEmpty(blockHash) {
+		// TWENTY_THIRD_REFACTOR: Update cs.round if precommits are from a future round.
+		// This fixes a panic in enterCommitLocked which searches from cs.round down to 0.
+		// If 2/3+ precommits came from a round > cs.round (e.g., node received valid
+		// precommits from peers who advanced), the search wouldn't find the commit.
+		// By updating cs.round first, enterCommitLocked will find the committing round.
+		if vote.Round > cs.round {
+			cs.round = vote.Round
+		}
 		// Commit!
 		cs.enterCommitLocked(cs.height)
 	} else if precommits.HasTwoThirdsAny() {

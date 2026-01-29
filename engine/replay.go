@@ -223,7 +223,10 @@ func (cs *ConsensusState) ReplayCatchup(targetHeight int64) error {
 
 	// If we have a proposal, set it
 	if result.Proposal != nil {
-		cs.proposal = result.Proposal
+		// TWENTY_THIRD_REFACTOR: Deep copy the proposal to prevent shared memory issues.
+		// Previously cs.proposal was assigned directly, violating the deep copy pattern.
+		// If the WAL decoder reuses buffers, cs.proposal could be corrupted.
+		cs.proposal = types.CopyProposal(result.Proposal)
 		// FOURTEENTH_REFACTOR: Also restore proposalBlock - this was missing and caused
 		// consensus to prevote/precommit nil after replay because enterPrevoteLocked
 		// and enterPrecommitLocked check proposalBlock, not proposal.

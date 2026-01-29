@@ -399,7 +399,10 @@ func (bs *BlockSyncer) ReceiveBlock(block *gen.Block, commit *gen.Commit) error 
 		}
 
 		// Check if caught up
-		if bs.currentHeight >= bs.targetHeight {
+		// TWENTY_THIRD_REFACTOR: Only fire callback when transitioning TO CaughtUp state,
+		// not when already caught up. Previously, receiving blocks while already caught up
+		// would fire duplicate callbacks.
+		if bs.currentHeight >= bs.targetHeight && bs.state == BlockSyncStateSyncing {
 			bs.state = BlockSyncStateCaughtUp
 			log.Printf("[INFO] blocksync: caught up at height %d", bs.currentHeight)
 			// H5: Track callback goroutines with WaitGroup

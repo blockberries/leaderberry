@@ -57,7 +57,11 @@ func VoteSignBytes(chainID string, v *Vote) []byte {
 }
 
 // IsNilVote returns true if the vote is for nil (no block)
+// TWENTY_THIRD_REFACTOR: A nil vote pointer is treated as a nil vote.
 func IsNilVote(v *Vote) bool {
+	if v == nil {
+		return true
+	}
 	return v.BlockHash == nil || IsHashEmpty(v.BlockHash)
 }
 

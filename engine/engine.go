@@ -229,7 +229,14 @@ func (e *Engine) UpdateValidatorSet(valSet *types.ValidatorSet) {
 func (e *Engine) IsValidator() bool {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
+	return e.isValidatorLocked()
+}
 
+// isValidatorLocked returns true if the local node is a validator.
+// TWENTY_THIRD_REFACTOR: Internal helper that assumes lock is already held.
+// This prevents deadlock when called from methods that already hold the lock
+// (e.g., GetMetrics), since Go's RWMutex is NOT reentrant.
+func (e *Engine) isValidatorLocked() bool {
 	if e.privVal == nil {
 		return false
 	}
@@ -373,13 +380,17 @@ func (e *Engine) GetMetrics() (*Metrics, error) {
 		proposerName = types.AccountNameString(proposer.Name)
 	}
 
+	// TWENTY_THIRD_REFACTOR: Use isValidatorLocked() instead of IsValidator()
+	// to avoid deadlock. GetMetrics() already holds RLock, and IsValidator()
+	// would try to acquire RLock again. Go's RWMutex is NOT reentrant,
+	// so if a writer is waiting, this would deadlock.
 	return &Metrics{
 		Height:           height,
 		Round:            round,
 		Step:             StepString(step),
 		Validators:       e.validatorSet.Size(),
 		TotalVotingPower: e.validatorSet.TotalPower,
-		IsValidator:      e.IsValidator(),
+		IsValidator:      e.isValidatorLocked(),
 		ProposerName:     proposerName,
 	}, nil
 }

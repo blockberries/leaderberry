@@ -72,19 +72,31 @@ func LoadFilePV(keyFilePath, stateFilePath string) (*FilePV, error) {
 		stateFilePath: stateFilePath,
 	}
 
-	// Load key (must exist)
+	// Load key (must exist) - key rarely changes, so loading before lock is safe
 	if err := pv.loadKeyStrict(); err != nil {
 		return nil, fmt.Errorf("failed to load key: %w", err)
 	}
 
-	// Load state (must exist)
-	if err := pv.loadStateStrict(); err != nil {
-		return nil, fmt.Errorf("failed to load state: %w", err)
-	}
-
-	// TWENTY_SECOND_REFACTOR: Acquire exclusive file lock to prevent multi-process access
+	// TWENTY_THIRD_REFACTOR: Acquire lock BEFORE loading state to prevent TOCTOU race.
+	// Previously, state was loaded before lock acquisition, creating a race window:
+	//   1. Process A loads state (H=100)
+	//   2. Process B (holding lock) signs H=101, persists, releases lock
+	//   3. Process A acquires lock
+	//   4. Process A has stale in-memory state (H=100) -> could double-sign at H=101
+	// Fix: Acquire lock first, then load state to ensure we have the latest state.
 	if err := pv.acquireLock(); err != nil {
 		return nil, fmt.Errorf("failed to acquire lock: %w", err)
+	}
+
+	// Load state AFTER acquiring lock to ensure we have the most recent state
+	if err := pv.loadStateStrict(); err != nil {
+		// Release lock on error - same cleanup as Close()
+		if pv.lockFile != nil {
+			_ = syscall.Flock(int(pv.lockFile.Fd()), syscall.LOCK_UN)
+			_ = pv.lockFile.Close()
+			pv.lockFile = nil
+		}
+		return nil, fmt.Errorf("failed to load state: %w", err)
 	}
 
 	return pv, nil
@@ -101,19 +113,26 @@ func NewFilePV(keyFilePath, stateFilePath string) (*FilePV, error) {
 		stateFilePath: stateFilePath,
 	}
 
-	// Load or generate key
+	// Load or generate key - key rarely changes, so loading before lock is acceptable
 	if err := pv.loadKey(); err != nil {
 		return nil, err
 	}
 
-	// Load or initialize state
-	if err := pv.loadState(); err != nil {
-		return nil, err
-	}
-
-	// TWENTY_SECOND_REFACTOR: Acquire exclusive file lock to prevent multi-process access
+	// TWENTY_THIRD_REFACTOR: Acquire lock BEFORE loading state to prevent TOCTOU race.
+	// See LoadFilePV for detailed explanation of the race condition.
 	if err := pv.acquireLock(); err != nil {
 		return nil, fmt.Errorf("failed to acquire lock: %w", err)
+	}
+
+	// Load or initialize state AFTER acquiring lock
+	if err := pv.loadState(); err != nil {
+		// Release lock on error - same cleanup as Close()
+		if pv.lockFile != nil {
+			_ = syscall.Flock(int(pv.lockFile.Fd()), syscall.LOCK_UN)
+			_ = pv.lockFile.Close()
+			pv.lockFile = nil
+		}
+		return nil, err
 	}
 
 	return pv, nil
@@ -681,12 +700,21 @@ func (pv *FilePV) isSameVote(vote *gen.Vote) bool {
 }
 
 // Reset resets the last sign state (use with caution!)
+// TWENTY_THIRD_REFACTOR: Added rollback on saveState failure for consistency
+// with SignVote/SignProposal. Previously, in-memory state was zeroed before
+// saveState(), so if persist failed, subsequent sign operations could bypass
+// height/round/step checks because in-memory was zeroed but disk was not.
 func (pv *FilePV) Reset() error {
 	pv.mu.Lock()
 	defer pv.mu.Unlock()
 
+	oldState := pv.lastSignState
 	pv.lastSignState = LastSignState{}
-	return pv.saveState()
+	if err := pv.saveState(); err != nil {
+		pv.lastSignState = oldState // Rollback on failure
+		return err
+	}
+	return nil
 }
 
 // acquireLock acquires an exclusive lock on the state file to prevent multi-process double-signing.

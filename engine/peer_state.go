@@ -53,7 +53,14 @@ type VoteBitmap struct {
 }
 
 // NewVoteBitmap creates a bitmap for tracking validator votes
+// TWENTY_THIRD_REFACTOR: Returns empty bitmap if valSet is nil.
 func NewVoteBitmap(valSet *types.ValidatorSet) *VoteBitmap {
+	if valSet == nil {
+		return &VoteBitmap{
+			bits:    nil,
+			numVals: 0,
+		}
+	}
 	numVals := valSet.Size()
 	// Need (numVals + 63) / 64 uint64s to store all bits
 	numWords := (numVals + 63) / 64

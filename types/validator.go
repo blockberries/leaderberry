@@ -262,24 +262,38 @@ func (vs *ValidatorSet) IncrementProposerPriority(times int32) {
 
 	for i := int32(0); i < times; i++ {
 		// Increment all priorities by voting power (with overflow protection)
+		// TWENTY_THIRD_REFACTOR: Check for overflow BEFORE adding, not after.
+		// If ProposerPriority is near MaxInt64, adding VotingPower wraps to negative,
+		// making the subsequent clamp check `newPriority > maxPriority` fail.
+		maxPriority := PriorityWindowSize / 2
+		minPriority := -PriorityWindowSize / 2
 		for _, v := range vs.Validators {
-			newPriority := v.ProposerPriority + v.VotingPower
-			// Clamp to prevent overflow
-			if newPriority > PriorityWindowSize/2 {
-				newPriority = PriorityWindowSize / 2
+			// Check for overflow before adding
+			if v.VotingPower > 0 && v.ProposerPriority > maxPriority-v.VotingPower {
+				v.ProposerPriority = maxPriority
+			} else {
+				v.ProposerPriority += v.VotingPower
+				// Still need to clamp in case priority was negative and sum is still large
+				if v.ProposerPriority > maxPriority {
+					v.ProposerPriority = maxPriority
+				}
 			}
-			v.ProposerPriority = newPriority
 		}
 
 		// Decrease proposer's priority by total power
 		proposer := vs.getProposer()
 		if proposer != nil {
-			newPriority := proposer.ProposerPriority - vs.TotalPower
-			// Clamp to prevent underflow
-			if newPriority < -PriorityWindowSize/2 {
-				newPriority = -PriorityWindowSize / 2
+			// TWENTY_THIRD_REFACTOR: Check for underflow BEFORE subtracting.
+			// If ProposerPriority is near MinInt64, subtracting TotalPower wraps to positive.
+			if vs.TotalPower > 0 && proposer.ProposerPriority < minPriority+vs.TotalPower {
+				proposer.ProposerPriority = minPriority
+			} else {
+				proposer.ProposerPriority -= vs.TotalPower
+				// Still need to clamp in case priority was positive and diff is still small
+				if proposer.ProposerPriority < minPriority {
+					proposer.ProposerPriority = minPriority
+				}
 			}
-			proposer.ProposerPriority = newPriority
 		}
 	}
 

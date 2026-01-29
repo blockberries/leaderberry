@@ -204,6 +204,11 @@ func (ps *PartSet) GetPart(index uint16) *BlockPart {
 
 // AddPart adds a part to the set. Returns error if invalid.
 func (ps *PartSet) AddPart(part *BlockPart) error {
+	// TWENTY_THIRD_REFACTOR: Add nil check to prevent panic
+	if part == nil {
+		return errors.New("cannot add nil part")
+	}
+
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 
@@ -226,7 +231,9 @@ func (ps *PartSet) AddPart(part *BlockPart) error {
 	}
 
 	// Add the part
-	ps.parts[part.Index] = part
+	// TWENTY_THIRD_REFACTOR: Deep copy the part to prevent caller from corrupting
+	// internal state by modifying the part after adding it.
+	ps.parts[part.Index] = CopyBlockPart(part)
 	wordIdx := part.Index / 64
 	bitIdx := part.Index % 64
 	ps.partsBits[wordIdx] |= uint64(1) << bitIdx
