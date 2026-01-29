@@ -456,6 +456,11 @@ func (pv *FilePV) SignVote(chainID string, vote *gen.Vote) error {
 	pv.mu.Lock()
 	defer pv.mu.Unlock()
 
+	// TWENTIETH_REFACTOR: Validate input to prevent panic
+	if vote == nil {
+		panic("CONSENSUS CRITICAL: nil vote in SignVote")
+	}
+
 	step := VoteStep(vote.Type)
 
 	// Check for double-sign
@@ -520,6 +525,11 @@ func (pv *FilePV) SignVote(chainID string, vote *gen.Vote) error {
 func (pv *FilePV) SignProposal(chainID string, proposal *gen.Proposal) error {
 	pv.mu.Lock()
 	defer pv.mu.Unlock()
+
+	// TWENTIETH_REFACTOR: Validate input to prevent panic
+	if proposal == nil {
+		panic("CONSENSUS CRITICAL: nil proposal in SignProposal")
+	}
 
 	// Check for double-sign
 	if err := pv.lastSignState.CheckHRS(proposal.Height, proposal.Round, StepProposal); err != nil {

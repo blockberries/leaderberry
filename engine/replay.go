@@ -251,9 +251,7 @@ func (cs *ConsensusState) ReplayCatchup(targetHeight int64) error {
 // ELEVENTH_REFACTOR: Now handles conflicting votes to preserve Byzantine evidence.
 func (cs *ConsensusState) addVoteNoLock(vote *gen.Vote) {
 	// Get the appropriate vote set
-	var voteSet interface {
-		AddVote(*gen.Vote) (bool, error)
-	}
+	var voteSet *VoteSet
 
 	switch vote.Type {
 	case gen.VoteTypeVoteTypePrevote:
@@ -271,7 +269,9 @@ func (cs *ConsensusState) addVoteNoLock(vote *gen.Vote) {
 
 	// ELEVENTH_REFACTOR: Handle equivocation during replay instead of ignoring.
 	// If we see conflicting votes during replay, that's Byzantine evidence.
-	_, err := voteSet.AddVote(vote)
+	// TWENTIETH_REFACTOR: Use addVoteForReplay to skip timestamp validation during WAL replay.
+	// This allows recovery after extended downtime (>10 minutes) without rejecting old votes.
+	_, err := voteSet.addVoteForReplay(vote)
 	if err == ErrConflictingVote {
 		log.Printf("[WARN] consensus: conflicting vote detected during replay: "+
 			"height=%d round=%d validator=%d", vote.Height, vote.Round, vote.ValidatorIndex)

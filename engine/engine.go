@@ -231,7 +231,9 @@ func (e *Engine) IsValidator() bool {
 func (e *Engine) GetProposer() *types.NamedValidator {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return e.validatorSet.Proposer
+	// TWENTIETH_REFACTOR: Return a copy to prevent caller corruption of internal state.
+	// This is consistent with GetValidatorSet() which also returns a copy.
+	return types.CopyValidator(e.validatorSet.Proposer)
 }
 
 // ChainID returns the chain ID

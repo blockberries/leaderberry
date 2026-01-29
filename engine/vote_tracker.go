@@ -118,6 +118,38 @@ func (vs *VoteSet) AddVote(vote *gen.Vote) (bool, error) {
 		return false, fmt.Errorf("%w: timestamp too far in past", ErrInvalidVote)
 	}
 
+	return vs.addVoteInternal(vote)
+}
+
+// addVoteForReplay adds a vote during WAL replay, skipping timestamp validation.
+// TWENTIETH_REFACTOR: Timestamp validation fails for votes replayed after extended downtime.
+// During replay, votes can be arbitrarily old (node may have been down for days), but
+// their timestamps were valid when originally received. Skip timestamp checks but verify
+// all other vote properties (signature, validator membership, etc).
+func (vs *VoteSet) addVoteForReplay(vote *gen.Vote) (bool, error) {
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+
+	// TWELFTH_REFACTOR: Check for stale VoteSet reference.
+	if vs.parent != nil {
+		currentGen := vs.parent.generation.Load()
+		if currentGen != vs.myGeneration {
+			return false, ErrStaleVoteSet
+		}
+	}
+
+	// Validate vote matches this set
+	if vote.Height != vs.height || vote.Round != vs.round || vote.Type != vs.voteType {
+		return false, ErrInvalidVote
+	}
+
+	// Skip timestamp validation during replay - vote was valid when received
+	return vs.addVoteInternal(vote)
+}
+
+// addVoteInternal completes vote addition after validation.
+// Assumes caller holds vs.mu and has performed appropriate validation.
+func (vs *VoteSet) addVoteInternal(vote *gen.Vote) (bool, error) {
 	// Check validator exists
 	val := vs.validatorSet.GetByIndex(vote.ValidatorIndex)
 	if val == nil {

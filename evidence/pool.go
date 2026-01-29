@@ -196,6 +196,16 @@ func (p *Pool) AddEvidence(ev *gen.Evidence) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// TWENTIETH_REFACTOR: Validate input to prevent adding invalid evidence
+	if ev == nil {
+		return ErrInvalidEvidence
+	}
+
+	// Basic validation: ensure evidence has required fields
+	if len(ev.Data) == 0 {
+		return ErrInvalidEvidence
+	}
+
 	// M8: Check pending evidence limit
 	if len(p.pending) >= MaxPendingEvidence {
 		return errors.New("pending evidence pool full")
@@ -219,7 +229,16 @@ func (p *Pool) AddEvidence(ev *gen.Evidence) error {
 		return ErrEvidenceExpired
 	}
 
-	p.pending = append(p.pending, ev)
+	// TWENTIETH_REFACTOR: Deep copy evidence before storing to prevent caller corruption.
+	// If we store the pointer directly, caller could modify the evidence after adding.
+	evCopy := &gen.Evidence{
+		Type:   ev.Type,
+		Height: ev.Height,
+		Time:   ev.Time,
+		Data:   make([]byte, len(ev.Data)),
+	}
+	copy(evCopy.Data, ev.Data)
+	p.pending = append(p.pending, evCopy)
 	return nil
 }
 
@@ -228,6 +247,11 @@ func (p *Pool) AddEvidence(ev *gen.Evidence) error {
 // Previously accepted external evidence without verification.
 // If chainID is empty, validation is skipped (useful for testing).
 func (p *Pool) AddDuplicateVoteEvidence(dve *gen.DuplicateVoteEvidence, chainID string, valSet *types.ValidatorSet) error {
+	// TWENTIETH_REFACTOR: Validate inputs
+	if dve == nil {
+		return ErrInvalidEvidence
+	}
+
 	// EIGHTEENTH_REFACTOR: Validate evidence before adding to prevent invalid evidence
 	// from being stored and propagated to the network.
 	// Skip validation if chainID is empty (for testing only - production should always provide chainID).
@@ -284,7 +308,17 @@ func (p *Pool) PendingEvidence(maxBytes int64) []gen.Evidence {
 			break
 		}
 
-		result = append(result, *ev)
+		// TWENTIETH_REFACTOR: Deep copy evidence to prevent caller corruption of internal state.
+		// The gen.Evidence struct contains a Data []byte field which is shared if we only
+		// dereference the pointer. Caller could modify Data and corrupt the pool.
+		evCopy := gen.Evidence{
+			Type:   ev.Type,
+			Height: ev.Height,
+			Time:   ev.Time,
+			Data:   make([]byte, len(ev.Data)),
+		}
+		copy(evCopy.Data, ev.Data)
+		result = append(result, evCopy)
 		totalSize += evSize
 	}
 
@@ -314,6 +348,14 @@ func (p *Pool) Size() int {
 
 // VerifyDuplicateVoteEvidence verifies that duplicate vote evidence is valid
 func VerifyDuplicateVoteEvidence(dve *gen.DuplicateVoteEvidence, chainID string, valSet *types.ValidatorSet) error {
+	// TWENTIETH_REFACTOR: Validate inputs to prevent panic
+	if dve == nil {
+		return ErrInvalidEvidence
+	}
+	if valSet == nil {
+		return errors.New("nil validator set")
+	}
+
 	voteA := &dve.VoteA
 	voteB := &dve.VoteB
 

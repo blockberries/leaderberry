@@ -64,10 +64,14 @@ message ConsensusStateData {
 }
 
 /// LastSignState tracks the last signed vote for double-sign prevention
+/// TWENTIETH_REFACTOR: Added sign_bytes_hash and timestamp fields for complete
+/// idempotency checking (TWELFTH_REFACTOR additions now in schema)
 message LastSignState {
     int64 height = 1;
     int32 round = 2;
     int8 step = 3;
     *Hash block_hash = 4;
     Signature signature = 5;
+    *Hash sign_bytes_hash = 6;  // Hash of the complete SignBytes for exact comparison
+    int64 timestamp = 7;         // Timestamp for timestamp-sensitive comparisons
 }

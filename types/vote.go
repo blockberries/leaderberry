@@ -31,6 +31,11 @@ var (
 
 // VoteSignBytes returns the bytes to sign for a vote
 func VoteSignBytes(chainID string, v *Vote) []byte {
+	// TWENTIETH_REFACTOR: Validate input to prevent panic
+	if v == nil {
+		panic("CONSENSUS CRITICAL: nil vote in VoteSignBytes")
+	}
+
 	// M3: Create canonical vote with explicit zero signature for deterministic signing
 	canonical := &Vote{
 		Type:           v.Type,

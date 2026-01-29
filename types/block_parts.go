@@ -191,14 +191,15 @@ func (ps *PartSet) hasPartUnlocked(index uint16) bool {
 	return (ps.partsBits[wordIdx] & (uint64(1) << bitIdx)) != 0
 }
 
-// GetPart returns the part at index, or nil if not present
+// GetPart returns the part at index, or nil if not present.
+// TWENTIETH_REFACTOR: Returns a deep copy to prevent caller corruption of internal state.
 func (ps *PartSet) GetPart(index uint16) *BlockPart {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 	if index >= ps.total {
 		return nil
 	}
-	return ps.parts[index]
+	return CopyBlockPart(ps.parts[index])
 }
 
 // AddPart adds a part to the set. Returns error if invalid.
@@ -633,4 +634,29 @@ func (pb *PartSetBitmap) String() string {
 
 	buf.WriteString(fmt.Sprintf("have=%d/%d}", count, pb.total))
 	return buf.String()
+}
+
+// CopyBlockPart creates a deep copy of a BlockPart.
+// TWENTIETH_REFACTOR: Added to prevent caller corruption when GetPart returns internal state.
+func CopyBlockPart(part *BlockPart) *BlockPart {
+	if part == nil {
+		return nil
+	}
+
+	// Deep copy Bytes
+	bytesCopy := make([]byte, len(part.Bytes))
+	copy(bytesCopy, part.Bytes)
+
+	// Deep copy ProofPath
+	proofPathCopy := make([]Hash, len(part.ProofPath))
+	for i, h := range part.ProofPath {
+		proofPathCopy[i] = *CopyHash(&h)
+	}
+
+	return &BlockPart{
+		Index:     part.Index,
+		Bytes:     bytesCopy,
+		ProofPath: proofPathCopy,
+		ProofRoot: *CopyHash(&part.ProofRoot),
+	}
 }

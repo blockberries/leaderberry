@@ -110,12 +110,26 @@ func VerifyAuthorization(
 	var totalWeight uint32
 
 	// Check direct signatures
+	// TWENTIETH_REFACTOR: Track which keys have been counted to prevent duplicate signature attack.
+	// Without this, an attacker could submit the same valid signature multiple times to inflate
+	// their weight and bypass the threshold requirement.
+	seenKeys := make(map[string]bool, len(auth.Signatures))
+
 	for _, sig := range auth.Signatures {
+		// Create unique key identifier
+		keyID := string(sig.PublicKey.Data)
+		if seenKeys[keyID] {
+			// Duplicate signature for same key - skip it
+			continue
+		}
+
 		// Find the key in authority
 		for _, kw := range authority.Keys {
 			if bytes.Equal(sig.PublicKey.Data, kw.PublicKey.Data) {
 				// Verify signature
 				if VerifySignature(kw.PublicKey, signBytes, sig.Signature) {
+					// Mark this key as counted
+					seenKeys[keyID] = true
 					// SIXTH_REFACTOR: Use safe addition to prevent overflow
 					totalWeight = safeAddWeight(totalWeight, kw.Weight)
 				}

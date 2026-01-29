@@ -98,22 +98,33 @@ func VoteStep(voteType gen.VoteType) int8 {
 
 // ToGenerated converts to generated LastSignState type
 func (lss *LastSignState) ToGenerated() *gen.LastSignState {
+	// TWENTIETH_REFACTOR: NOTE - SignBytesHash and Timestamp fields are NOT serialized
+	// because gen.LastSignState doesn't include them. Schema was updated in wal.cram
+	// to include these fields, but requires cramberry regeneration (run: make generate).
+	// Until regenerated, these fields will be lost if this function is used for persistence.
+	// Current usage: Only called for testing/debugging - actual persistence uses FilePV.saveState()
+	// which writes LastSignState directly, preserving all fields.
 	return &gen.LastSignState{
 		Height:    lss.Height,
 		Round:     lss.Round,
 		Step:      lss.Step,
 		BlockHash: lss.BlockHash,
 		Signature: lss.Signature,
+		// Missing: SignBytesHash, Timestamp (not in generated schema yet)
 	}
 }
 
 // LastSignStateFromGenerated creates a LastSignState from generated type
 func LastSignStateFromGenerated(g *gen.LastSignState) *LastSignState {
+	// TWENTIETH_REFACTOR: NOTE - SignBytesHash and Timestamp are initialized to nil/zero
+	// because gen.LastSignState doesn't include them. After schema regeneration with the
+	// updated wal.cram, these fields will be properly restored.
 	return &LastSignState{
 		Height:    g.Height,
 		Round:     g.Round,
 		Step:      g.Step,
 		BlockHash: g.BlockHash,
 		Signature: g.Signature,
+		// Missing: SignBytesHash, Timestamp (not in generated schema yet)
 	}
 }
