@@ -97,6 +97,7 @@ var (
 // - Signatures are from known validators
 // - No duplicate signatures
 // - 2/3+ of voting power has signed for the block
+// SIXTEENTH_REFACTOR: Added valSet nil check at function entry.
 func VerifyCommit(
 	chainID string,
 	valSet *ValidatorSet,
@@ -104,6 +105,9 @@ func VerifyCommit(
 	height int64,
 	commit *Commit,
 ) error {
+	if valSet == nil {
+		return errors.New("nil validator set")
+	}
 	if commit == nil {
 		return ErrInvalidCommit
 	}
@@ -121,9 +125,18 @@ func VerifyCommit(
 	seenValidators := make(map[uint16]bool)
 
 	for _, sig := range commit.Signatures {
+		// SEVENTEENTH_REFACTOR: Check for duplicate FIRST, before any filtering.
+		// Previously, empty signatures would skip this check, allowing the same
+		// validator to appear twice (once with empty sig, once with valid sig).
+		// This could allow accepting commits with insufficient voting power.
+		if seenValidators[sig.ValidatorIndex] {
+			return fmt.Errorf("%w: validator %d appears twice", ErrDuplicateCommitSig, sig.ValidatorIndex)
+		}
+		seenValidators[sig.ValidatorIndex] = true
+
 		// H3: Validate signature structure before processing
-		if sig.Signature.Data == nil || len(sig.Signature.Data) == 0 {
-			// Empty signature - skip but don't count
+		if len(sig.Signature.Data) == 0 {
+			// Empty signature - skip but don't count toward power
 			continue
 		}
 
@@ -137,12 +150,6 @@ func VerifyCommit(
 			// Validator voted for different block - don't count
 			continue
 		}
-
-		// Check for duplicate
-		if seenValidators[sig.ValidatorIndex] {
-			return fmt.Errorf("%w: validator %d appears twice", ErrDuplicateCommitSig, sig.ValidatorIndex)
-		}
-		seenValidators[sig.ValidatorIndex] = true
 
 		// Get validator
 		val := valSet.GetByIndex(sig.ValidatorIndex)
@@ -219,12 +226,16 @@ func CopyVote(v *Vote) *Vote {
 
 // VerifyCommitLight is a lighter version that only checks voting power
 // without re-verifying signatures (for use when signatures were already verified).
+// SIXTEENTH_REFACTOR: Added valSet nil check at function entry.
 func VerifyCommitLight(
 	valSet *ValidatorSet,
 	blockHash Hash,
 	height int64,
 	commit *Commit,
 ) error {
+	if valSet == nil {
+		return errors.New("nil validator set")
+	}
 	if commit == nil {
 		return ErrInvalidCommit
 	}
@@ -239,6 +250,13 @@ func VerifyCommitLight(
 	seenValidators := make(map[uint16]bool)
 
 	for _, sig := range commit.Signatures {
+		// SEVENTEENTH_REFACTOR: Check for duplicate FIRST, before any filtering.
+		// Same fix as in VerifyCommit to prevent double-counting.
+		if seenValidators[sig.ValidatorIndex] {
+			return fmt.Errorf("%w: validator %d", ErrDuplicateCommitSig, sig.ValidatorIndex)
+		}
+		seenValidators[sig.ValidatorIndex] = true
+
 		// Skip nil/absent votes
 		if sig.BlockHash == nil || IsHashEmpty(sig.BlockHash) {
 			continue
@@ -248,12 +266,6 @@ func VerifyCommitLight(
 		if !HashEqual(*sig.BlockHash, blockHash) {
 			continue
 		}
-
-		// No duplicates
-		if seenValidators[sig.ValidatorIndex] {
-			return fmt.Errorf("%w: validator %d", ErrDuplicateCommitSig, sig.ValidatorIndex)
-		}
-		seenValidators[sig.ValidatorIndex] = true
 
 		// Get validator power
 		val := valSet.GetByIndex(sig.ValidatorIndex)

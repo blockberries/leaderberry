@@ -433,11 +433,7 @@ func (p *Pool) isExpired(ev *gen.Evidence) bool {
 
 	// Check time age
 	evTime := time.Unix(0, ev.Time)
-	if p.currentTime.Sub(evTime) > p.config.MaxAge {
-		return true
-	}
-
-	return false
+	return p.currentTime.Sub(evTime) > p.config.MaxAge
 }
 
 // removePending removes evidence from the pending list

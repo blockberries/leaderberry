@@ -3,6 +3,7 @@ package types
 import (
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 
 	gen "github.com/blockberries/leaderberry/types/generated"
@@ -135,17 +136,40 @@ func (vs *ValidatorSet) initProposerPriorities() {
 // as the important property is that priorities remain bounded, not exact centering.
 // The lost fractional part (sum % len) is at most (len-1), which is negligible
 // compared to typical priority values.
+// SIXTEENTH_REFACTOR: Added overflow protection for the sum calculation.
 func (vs *ValidatorSet) centerPriorities() {
 	if len(vs.Validators) == 0 {
 		return
 	}
 
 	// Calculate average (integer division - some precision loss is acceptable)
+	// SIXTEENTH_REFACTOR: Use overflow-safe summation. With MaxValidators=65535 and
+	// priorities at PriorityWindowSize/2=2^60, naive summation could overflow int64.
+	// We detect overflow and clamp the sum to prevent incorrect averaging.
 	var sum int64
+	overflow := false
 	for _, v := range vs.Validators {
+		// Check for overflow before adding
+		if v.ProposerPriority > 0 && sum > math.MaxInt64-v.ProposerPriority {
+			overflow = true
+			sum = math.MaxInt64
+			break
+		}
+		if v.ProposerPriority < 0 && sum < math.MinInt64-v.ProposerPriority {
+			overflow = true
+			sum = math.MinInt64
+			break
+		}
 		sum += v.ProposerPriority
 	}
-	avg := sum / int64(len(vs.Validators))
+
+	// If overflow occurred, use 0 as average (centering will be approximate but safe)
+	var avg int64
+	if overflow {
+		avg = 0
+	} else {
+		avg = sum / int64(len(vs.Validators))
+	}
 
 	// Subtract average from all
 	for _, v := range vs.Validators {
@@ -153,7 +177,10 @@ func (vs *ValidatorSet) centerPriorities() {
 	}
 }
 
-// getProposer returns the validator with highest priority
+// getProposer returns the validator with highest priority.
+// SIXTEENTH_REFACTOR: Added deterministic tie-breaker using validator name.
+// When two validators have equal priority, the one with lexicographically
+// smaller name wins. This ensures all nodes select the same proposer.
 func (vs *ValidatorSet) getProposer() *NamedValidator {
 	if len(vs.Validators) == 0 {
 		return nil
@@ -161,7 +188,10 @@ func (vs *ValidatorSet) getProposer() *NamedValidator {
 
 	var proposer *NamedValidator
 	for _, v := range vs.Validators {
-		if proposer == nil || v.ProposerPriority > proposer.ProposerPriority {
+		if proposer == nil ||
+			v.ProposerPriority > proposer.ProposerPriority ||
+			(v.ProposerPriority == proposer.ProposerPriority &&
+				AccountNameString(v.Name) < AccountNameString(proposer.Name)) {
 			proposer = v
 		}
 	}

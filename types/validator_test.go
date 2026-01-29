@@ -82,7 +82,7 @@ func TestValidatorSetGetByName(t *testing.T) {
 
 	alice := vs.GetByName("alice")
 	if alice == nil {
-		t.Error("alice should exist")
+		t.Fatal("alice should exist")
 	}
 	if AccountNameString(alice.Name) != "alice" {
 		t.Error("wrong validator returned")

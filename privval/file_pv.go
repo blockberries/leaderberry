@@ -462,8 +462,10 @@ func (pv *FilePV) SignVote(chainID string, vote *gen.Vote) error {
 	if err := pv.lastSignState.CheckHRS(vote.Height, vote.Round, step); err != nil {
 		// Check if it's the same vote (idempotent re-signing)
 		if err == ErrDoubleSign && pv.isSameVote(vote) {
-			// Return existing signature
-			vote.Signature = pv.lastSignState.Signature
+			// FIFTEENTH_REFACTOR: Deep copy signature to prevent caller from
+			// corrupting internal state. Previously returned a reference that
+			// shared memory with lastSignState.Signature.
+			vote.Signature = types.CopySignature(pv.lastSignState.Signature)
 			return nil
 		}
 		return err
@@ -522,8 +524,11 @@ func (pv *FilePV) SignProposal(chainID string, proposal *gen.Proposal) error {
 	// Check for double-sign
 	if err := pv.lastSignState.CheckHRS(proposal.Height, proposal.Round, StepProposal); err != nil {
 		// Check if it's the same proposal (idempotent re-signing)
-		if err == ErrDoubleSign && pv.isSameProposal(proposal) {
-			proposal.Signature = pv.lastSignState.Signature
+		// SIXTEENTH_REFACTOR: Pass chainID for SignBytesHash comparison
+		if err == ErrDoubleSign && pv.isSameProposal(chainID, proposal) {
+			// FIFTEENTH_REFACTOR: Deep copy signature to prevent caller from
+			// corrupting internal state.
+			proposal.Signature = types.CopySignature(pv.lastSignState.Signature)
 			return nil
 		}
 		return err
@@ -533,6 +538,12 @@ func (pv *FilePV) SignProposal(chainID string, proposal *gen.Proposal) error {
 	signBytes := types.ProposalSignBytes(chainID, proposal)
 	sig := ed25519.Sign(pv.privKey, signBytes)
 	newSig := types.MustNewSignature(sig) // ed25519 output is always valid
+
+	// SIXTEENTH_REFACTOR: Compute hash of sign bytes for accurate idempotency check.
+	// ProposalSignBytes includes PolRound and PolVotes which aren't checked by
+	// isSameProposal's BlockHash/Timestamp checks alone.
+	signBytesHash := sha256.Sum256(signBytes)
+	signBytesHashObj := types.MustNewHash(signBytesHash[:])
 
 	// SEVENTH_REFACTOR: Prevent double-sign vulnerability. See SignVote for details.
 	// EIGHTH_REFACTOR: Clarified - signature only returned after persist succeeds.
@@ -547,6 +558,8 @@ func (pv *FilePV) SignProposal(chainID string, proposal *gen.Proposal) error {
 	pv.lastSignState.BlockHash = &blockHash
 	// TWELFTH_REFACTOR: Store timestamp for accurate idempotency check
 	pv.lastSignState.Timestamp = proposal.Timestamp
+	// SIXTEENTH_REFACTOR: Store sign bytes hash to detect PolRound/PolVotes differences
+	pv.lastSignState.SignBytesHash = &signBytesHashObj
 
 	// Persist state - PANIC on failure (consensus critical)
 	if err := pv.saveState(); err != nil {
@@ -563,10 +576,22 @@ func (pv *FilePV) SignProposal(chainID string, proposal *gen.Proposal) error {
 
 // isSameProposal checks if a proposal matches the last signed proposal.
 // TWELFTH_REFACTOR: Now also checks Timestamp since ProposalSignBytes includes it.
-func (pv *FilePV) isSameProposal(proposal *gen.Proposal) bool {
-	// TWELFTH_REFACTOR: Check timestamp first - if it differs, the signature
-	// won't match even if BlockHash is the same.
-	if pv.lastSignState.Timestamp != 0 && pv.lastSignState.Timestamp != proposal.Timestamp {
+// SIXTEENTH_REFACTOR: Fixed timestamp==0 bug, added SignBytesHash comparison.
+// Now takes chainID to compute SignBytesHash for proper comparison including
+// PolRound and PolVotes fields.
+func (pv *FilePV) isSameProposal(chainID string, proposal *gen.Proposal) bool {
+	// SIXTEENTH_REFACTOR: If we have SignBytesHash stored, use it for exact comparison.
+	// This catches all differences including PolRound and PolVotes.
+	if pv.lastSignState.SignBytesHash != nil {
+		signBytes := types.ProposalSignBytes(chainID, proposal)
+		signBytesHash := sha256.Sum256(signBytes)
+		signBytesHashObj := types.MustNewHash(signBytesHash[:])
+		return types.HashEqual(*pv.lastSignState.SignBytesHash, signBytesHashObj)
+	}
+
+	// Fallback for state files that don't have SignBytesHash yet (backward compatibility)
+	// In this case, check Timestamp and BlockHash
+	if pv.lastSignState.Timestamp != proposal.Timestamp {
 		return false
 	}
 
@@ -585,11 +610,12 @@ func (pv *FilePV) isSameProposal(proposal *gen.Proposal) bool {
 // - BlockHash and Timestamp are checked below
 // - Validator/ValidatorIndex are deterministic for a given validator (can't differ)
 // The SignBytesHash field is retained for future use but not required for correctness.
+// SIXTEENTH_REFACTOR: Fixed timestamp==0 bug - now always checks timestamp match.
 func (pv *FilePV) isSameVote(vote *gen.Vote) bool {
-	// TWELFTH_REFACTOR: Check timestamp first - if it differs, the signature
-	// won't match even if BlockHash is the same. This prevents returning
-	// invalid signatures for votes with different timestamps.
-	if pv.lastSignState.Timestamp != 0 && pv.lastSignState.Timestamp != vote.Timestamp {
+	// SIXTEENTH_REFACTOR: Always check timestamp. Previously, when lastSignState.Timestamp==0
+	// (initial state or migration), any timestamp would pass, returning a cached signature
+	// that wouldn't verify because it was signed with a different timestamp.
+	if pv.lastSignState.Timestamp != vote.Timestamp {
 		return false
 	}
 

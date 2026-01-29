@@ -184,7 +184,7 @@ func TestBlockSyncerProgress(t *testing.T) {
 
 	bs.UpdateTargetHeight()
 
-	current, target = bs.GetProgress()
+	_, target = bs.GetProgress()
 	if target != 5 {
 		t.Errorf("expected target 5, got %d", target)
 	}

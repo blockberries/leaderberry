@@ -150,7 +150,11 @@ func CopyCommit(c *Commit) *Commit {
 }
 
 // CopyBatchCertRef creates a deep copy of a BatchCertRef.
+// SIXTEENTH_REFACTOR: Added nil check for consistency with other Copy functions.
 func CopyBatchCertRef(ref *BatchCertRef) BatchCertRef {
+	if ref == nil {
+		return BatchCertRef{}
+	}
 	refCopy := BatchCertRef{
 		Round: ref.Round,
 	}
@@ -168,7 +172,11 @@ func CopyBatchCertRef(ref *BatchCertRef) BatchCertRef {
 }
 
 // CopyBlockHeader creates a deep copy of a BlockHeader.
+// SIXTEENTH_REFACTOR: Added nil check for consistency with other Copy functions.
 func CopyBlockHeader(h *BlockHeader) BlockHeader {
+	if h == nil {
+		return BlockHeader{}
+	}
 	headerCopy := BlockHeader{
 		ChainId:  h.ChainId,
 		Height:   h.Height,
@@ -198,7 +206,11 @@ func CopyBlockHeader(h *BlockHeader) BlockHeader {
 }
 
 // CopyBlockData creates a deep copy of BlockData.
+// SIXTEENTH_REFACTOR: Added nil check for consistency with other Copy functions.
 func CopyBlockData(d *BlockData) BlockData {
+	if d == nil {
+		return BlockData{}
+	}
 	dataCopy := BlockData{}
 
 	// Deep copy BatchDigests slice

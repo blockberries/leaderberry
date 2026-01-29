@@ -397,10 +397,8 @@ func buildMerkleTreeWithProofs(leafHashes []Hash) (Hash, [][]Hash) {
 			for _, idx := range leftIndices {
 				proofs[idx] = append(proofs[idx], rightHash)
 			}
-			if rightIndices != nil {
-				for _, idx := range rightIndices {
-					proofs[idx] = append(proofs[idx], leftHash)
-				}
+			for _, idx := range rightIndices {
+				proofs[idx] = append(proofs[idx], leftHash)
 			}
 
 			// Compute parent hash
@@ -600,10 +598,6 @@ func (pb *PartSetBitmap) Diff(other *PartSetBitmap) []uint16 {
 	defer other.mu.RUnlock()
 
 	diff := make([]uint16, 0)
-	minWords := len(pb.bits)
-	if len(other.bits) < minWords {
-		minWords = len(other.bits)
-	}
 
 	for i := uint16(0); i < pb.total; i++ {
 		wordIdx := i / 64

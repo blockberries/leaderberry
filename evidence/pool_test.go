@@ -122,7 +122,7 @@ func TestPoolCheckVoteSameBlock(t *testing.T) {
 		ValidatorIndex: 0,
 	}
 
-	pool.CheckVote(vote1, valSet, "")
+	_, _ = pool.CheckVote(vote1, valSet, "")
 
 	// Same block hash - not equivocation
 	vote2 := &gen.Vote{
@@ -183,7 +183,7 @@ func TestPoolPendingEvidence(t *testing.T) {
 			Time:   time.Now().Add(time.Duration(i) * time.Second).UnixNano(),
 			Data:   []byte("test evidence"),
 		}
-		pool.AddEvidence(ev)
+		_ = pool.AddEvidence(ev)
 	}
 
 	if pool.Size() != 5 {
@@ -216,7 +216,7 @@ func TestPoolMarkCommitted(t *testing.T) {
 		Time:   time.Now().UnixNano(),
 		Data:   []byte("test"),
 	}
-	pool.AddEvidence(ev)
+	_ = pool.AddEvidence(ev)
 
 	if pool.Size() != 1 {
 		t.Fatal("should have 1 pending")
@@ -271,7 +271,7 @@ func TestPoolUpdate(t *testing.T) {
 		Time:   time.Now().UnixNano(),
 		Data:   []byte("test"),
 	}
-	pool.AddEvidence(ev)
+	_ = pool.AddEvidence(ev)
 
 	if pool.Size() != 1 {
 		t.Error("should have 1 pending")

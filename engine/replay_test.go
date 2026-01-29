@@ -18,7 +18,7 @@ func TestWALWriterBasic(t *testing.T) {
 	if err := w.Start(); err != nil {
 		t.Fatalf("failed to start WAL: %v", err)
 	}
-	defer w.Stop()
+	defer func() { _ = w.Stop() }()
 
 	writer := NewWALWriter(w)
 
@@ -71,7 +71,7 @@ func TestWALWriterState(t *testing.T) {
 	if err := w.Start(); err != nil {
 		t.Fatalf("failed to start WAL: %v", err)
 	}
-	defer w.Stop()
+	defer func() { _ = w.Stop() }()
 
 	writer := NewWALWriter(w)
 
@@ -106,7 +106,7 @@ func TestReplayEmptyWAL(t *testing.T) {
 	if err := w.Start(); err != nil {
 		t.Fatalf("failed to start WAL: %v", err)
 	}
-	defer w.Stop()
+	defer func() { _ = w.Stop() }()
 
 	cs := &ConsensusState{
 		wal: w,
@@ -143,7 +143,7 @@ func TestReplayWithMessages(t *testing.T) {
 		Timestamp: 1000,
 		Proposer:  types.NewAccountName("alice"),
 	}
-	writer.WriteProposal(1, 0, proposal)
+	_ = writer.WriteProposal(1, 0, proposal)
 
 	vote := &gen.Vote{
 		Type:           types.VoteTypePrevote,
@@ -154,9 +154,9 @@ func TestReplayWithMessages(t *testing.T) {
 		Validator:      types.NewAccountName("alice"),
 		ValidatorIndex: 0,
 	}
-	writer.WriteVote(1, 0, vote)
+	_ = writer.WriteVote(1, 0, vote)
 
-	writer.WriteEndHeight(1)
+	_ = writer.WriteEndHeight(1)
 
 	// Write messages for height 2
 	proposal2 := &gen.Proposal{
@@ -165,7 +165,7 @@ func TestReplayWithMessages(t *testing.T) {
 		Timestamp: 2000,
 		Proposer:  types.NewAccountName("bob"),
 	}
-	writer.WriteProposal(2, 0, proposal2)
+	_ = writer.WriteProposal(2, 0, proposal2)
 
 	vote2 := &gen.Vote{
 		Type:           types.VoteTypePrevote,
@@ -176,10 +176,10 @@ func TestReplayWithMessages(t *testing.T) {
 		Validator:      types.NewAccountName("bob"),
 		ValidatorIndex: 1,
 	}
-	writer.WriteVote(2, 0, vote2)
+	_ = writer.WriteVote(2, 0, vote2)
 
 	writer.Flush()
-	w.Stop()
+	_ = w.Stop()
 
 	// Reopen WAL and replay
 	w2, err := wal.NewFileWAL(dir)
@@ -189,7 +189,7 @@ func TestReplayWithMessages(t *testing.T) {
 	if err := w2.Start(); err != nil {
 		t.Fatalf("failed to start WAL: %v", err)
 	}
-	defer w2.Stop()
+	defer func() { _ = w2.Stop() }()
 
 	cs := &ConsensusState{
 		wal: w2,

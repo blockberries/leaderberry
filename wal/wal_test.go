@@ -62,7 +62,7 @@ func TestFileWALWriteSync(t *testing.T) {
 	if err := wal.Start(); err != nil {
 		t.Fatalf("failed to start WAL: %v", err)
 	}
-	defer wal.Stop()
+	defer func() { _ = wal.Stop() }()
 
 	// WriteSync should flush immediately
 	msg := &Message{
@@ -153,14 +153,14 @@ func TestFileWALSearchForEndHeight(t *testing.T) {
 	}
 
 	// Write messages for height 1
-	wal.Write(&Message{Type: MsgTypeProposal, Height: 1, Round: 0})
-	wal.Write(&Message{Type: MsgTypeVote, Height: 1, Round: 0})
-	wal.Write(&Message{Type: MsgTypeEndHeight, Height: 1})
+	_ = wal.Write(&Message{Type: MsgTypeProposal, Height: 1, Round: 0})
+	_ = wal.Write(&Message{Type: MsgTypeVote, Height: 1, Round: 0})
+	_ = wal.Write(&Message{Type: MsgTypeEndHeight, Height: 1})
 
 	// Write messages for height 2
-	wal.Write(&Message{Type: MsgTypeProposal, Height: 2, Round: 0})
-	wal.Write(&Message{Type: MsgTypeVote, Height: 2, Round: 0})
-	wal.Write(&Message{Type: MsgTypeEndHeight, Height: 2})
+	_ = wal.Write(&Message{Type: MsgTypeProposal, Height: 2, Round: 0})
+	_ = wal.Write(&Message{Type: MsgTypeVote, Height: 2, Round: 0})
+	_ = wal.Write(&Message{Type: MsgTypeEndHeight, Height: 2})
 
 	// Search for end of height 1
 	reader, found, err := wal.SearchForEndHeight(1)
@@ -287,8 +287,8 @@ func TestMessageTypes(t *testing.T) {
 
 	dir := t.TempDir()
 	wal, _ := NewFileWAL(dir)
-	wal.Start()
-	defer wal.Stop()
+	_ = wal.Start()
+	defer func() { _ = wal.Stop() }()
 
 	for _, msgType := range msgTypes {
 		msg := &Message{

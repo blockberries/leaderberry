@@ -300,12 +300,15 @@ func (w *WALWriter) WriteProposal(height int64, round int32, proposal *gen.Propo
 }
 
 // WriteVote writes a vote to the WAL
+// SEVENTEENTH_REFACTOR: Changed from Write() to WriteSync() to ensure votes
+// are persisted before returning. Previously, votes could be lost on crash
+// if they were in the buffer but not yet synced to disk.
 func (w *WALWriter) WriteVote(height int64, round int32, vote *gen.Vote) error {
 	msg, err := wal.NewVoteMessage(height, round, vote)
 	if err != nil {
 		return err
 	}
-	return w.wal.Write(msg)
+	return w.wal.WriteSync(msg)
 }
 
 // WriteEndHeight writes an end-of-height marker to the WAL

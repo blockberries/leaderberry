@@ -63,8 +63,7 @@ func TestVoteSetAddVote(t *testing.T) {
 	// In production, votes would be signed
 	_, err := vs.AddVote(vote)
 	if err != ErrInvalidSignature {
-		// Expected - signature verification fails
-		// This test just validates the basic flow
+		t.Logf("Expected ErrInvalidSignature, got: %v", err)
 	}
 }
 

@@ -194,8 +194,8 @@ func TestPartSetMissing(t *testing.T) {
 	}
 
 	// Add parts 1 and 3
-	dstPS.AddPart(srcPS.GetPart(1))
-	dstPS.AddPart(srcPS.GetPart(3))
+	_ = dstPS.AddPart(srcPS.GetPart(1))
+	_ = dstPS.AddPart(srcPS.GetPart(3))
 
 	// Now 0, 2, 4 should be missing
 	missing = dstPS.MissingParts()

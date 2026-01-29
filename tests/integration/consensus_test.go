@@ -144,7 +144,7 @@ func TestEngineDoubleStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start engine: %v", err)
 	}
-	defer node.Engine.Stop()
+	defer func() { _ = node.Engine.Stop() }()
 
 	// Second start should fail
 	err = node.Engine.Start(1, nil)
@@ -163,7 +163,7 @@ func TestEngineAddProposal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start engine: %v", err)
 	}
-	defer node.Engine.Stop()
+	defer func() { _ = node.Engine.Stop() }()
 
 	// Create a proposal
 	proposal := &gen.Proposal{
@@ -190,7 +190,7 @@ func TestEngineAddVote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start engine: %v", err)
 	}
-	defer node.Engine.Stop()
+	defer func() { _ = node.Engine.Stop() }()
 
 	blockHash := types.HashBytes([]byte("block"))
 	vote := &gen.Vote{
@@ -220,7 +220,7 @@ func TestEngineMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start engine: %v", err)
 	}
-	defer node.Engine.Stop()
+	defer func() { _ = node.Engine.Stop() }()
 
 	metrics, err := node.Engine.GetMetrics()
 	if err != nil {
@@ -286,7 +286,7 @@ func TestEvidenceIntegration(t *testing.T) {
 		Validator:      types.NewAccountName("alice"),
 		ValidatorIndex: 0,
 	}
-	pool.CheckVote(vote1, valSet, "")
+	_, _ = pool.CheckVote(vote1, valSet, "")
 
 	// Conflicting vote - equivocation
 	vote2 := &gen.Vote{
@@ -378,7 +378,7 @@ func TestWALIntegration(t *testing.T) {
 		Timestamp: time.Now().UnixNano(),
 		Proposer:  types.NewAccountName("alice"),
 	}
-	writer.WriteProposal(1, 0, proposal)
+	_ = writer.WriteProposal(1, 0, proposal)
 
 	blockHash := types.HashBytes([]byte("block"))
 	vote := &gen.Vote{
@@ -390,11 +390,11 @@ func TestWALIntegration(t *testing.T) {
 		Validator:      types.NewAccountName("alice"),
 		ValidatorIndex: 0,
 	}
-	writer.WriteVote(1, 0, vote)
-	writer.WriteEndHeight(1)
+	_ = writer.WriteVote(1, 0, vote)
+	_ = writer.WriteEndHeight(1)
 	writer.Flush()
 
-	w.Stop()
+	_ = w.Stop()
 
 	// Reopen and verify messages can be read
 	w2, err := wal.NewFileWAL(dir)
@@ -404,7 +404,7 @@ func TestWALIntegration(t *testing.T) {
 	if err := w2.Start(); err != nil {
 		t.Fatalf("failed to start WAL: %v", err)
 	}
-	defer w2.Stop()
+	defer func() { _ = w2.Stop() }()
 
 	// Search for end height
 	_, found, err := w2.SearchForEndHeight(1)
@@ -439,7 +439,7 @@ func TestFullConsensusFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start engine: %v", err)
 	}
-	defer node.Engine.Stop()
+	defer func() { _ = node.Engine.Stop() }()
 
 	// Give time for initial operations
 	time.Sleep(50 * time.Millisecond)
@@ -456,7 +456,7 @@ func TestFullConsensusFlow(t *testing.T) {
 			Validator:      types.NewAccountName(name),
 			ValidatorIndex: uint16(i + 1),
 		}
-		node.Engine.AddVote(vote)
+		_ = node.Engine.AddVote(vote)
 	}
 
 	// Verify engine state

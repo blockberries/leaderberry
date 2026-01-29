@@ -131,3 +131,15 @@ func MustNewPublicKey(data []byte) PublicKey {
 func PublicKeyEqual(a, b PublicKey) bool {
 	return bytes.Equal(a.Data, b.Data)
 }
+
+// CopySignature creates a deep copy of a Signature.
+// FIFTEENTH_REFACTOR: Added to fix signature return vulnerability in file_pv.go
+// where returning internal signature reference allowed caller modification.
+func CopySignature(s Signature) Signature {
+	if len(s.Data) == 0 {
+		return Signature{}
+	}
+	copied := make([]byte, len(s.Data))
+	copy(copied, s.Data)
+	return Signature{Data: copied}
+}

@@ -374,7 +374,7 @@ func TestFilePVReset(t *testing.T) {
 		ValidatorIndex: 0,
 	}
 
-	pv.SignVote("test-chain", vote)
+	_ = pv.SignVote("test-chain", vote)
 
 	// Reset
 	err = pv.Reset()

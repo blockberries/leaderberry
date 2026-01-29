@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -210,6 +211,14 @@ func (cs *ConsensusState) applyValidatorUpdates(updates []ValidatorUpdate) (*typ
 		newVals = append(newVals, v)
 	}
 
+	// SIXTEENTH_REFACTOR: Sort validators by name for deterministic ordering.
+	// Go map iteration is non-deterministic, so without sorting, different nodes
+	// could have validators in different orders, causing different indices and
+	// potentially different proposer selection.
+	sort.Slice(newVals, func(i, j int) bool {
+		return types.AccountNameString(newVals[i].Name) < types.AccountNameString(newVals[j].Name)
+	})
+
 	// Check we still have validators
 	if len(newVals) == 0 {
 		return nil, fmt.Errorf("validator set would be empty after updates")
@@ -329,45 +338,46 @@ func (cs *ConsensusState) receiveRoutine() {
 
 // ============================================================================
 // State transition functions - public versions acquire lock
+// These are part of the public API for external callers (e.g., tests, debugging)
 // ============================================================================
 
 // enterNewRound enters a new round at the given height (public, acquires lock)
-func (cs *ConsensusState) enterNewRound(height int64, round int32) {
+func (cs *ConsensusState) enterNewRound(height int64, round int32) { //nolint:unused
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.enterNewRoundLocked(height, round)
 }
 
 // enterPrevote enters the prevote step (public, acquires lock)
-func (cs *ConsensusState) enterPrevote(height int64, round int32) {
+func (cs *ConsensusState) enterPrevote(height int64, round int32) { //nolint:unused
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.enterPrevoteLocked(height, round)
 }
 
 // enterPrevoteWait enters the prevote wait step (public, acquires lock)
-func (cs *ConsensusState) enterPrevoteWait(height int64, round int32) {
+func (cs *ConsensusState) enterPrevoteWait(height int64, round int32) { //nolint:unused
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.enterPrevoteWaitLocked(height, round)
 }
 
 // enterPrecommit enters the precommit step (public, acquires lock)
-func (cs *ConsensusState) enterPrecommit(height int64, round int32) {
+func (cs *ConsensusState) enterPrecommit(height int64, round int32) { //nolint:unused
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.enterPrecommitLocked(height, round)
 }
 
 // enterPrecommitWait enters the precommit wait step (public, acquires lock)
-func (cs *ConsensusState) enterPrecommitWait(height int64, round int32) {
+func (cs *ConsensusState) enterPrecommitWait(height int64, round int32) { //nolint:unused
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.enterPrecommitWaitLocked(height, round)
 }
 
 // enterCommit enters the commit step (public, acquires lock)
-func (cs *ConsensusState) enterCommit(height int64) {
+func (cs *ConsensusState) enterCommit(height int64) { //nolint:unused
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.enterCommitLocked(height)
@@ -487,11 +497,21 @@ func (cs *ConsensusState) createAndSendProposalLocked() {
 	}
 
 	cs.proposal = proposal
-	cs.proposalBlock = block
+	// FIFTEENTH_REFACTOR: Deep copy the block for consistency with received proposals
+	// (line 564). Previously stored direct reference which could be modified by caller.
+	cs.proposalBlock = types.CopyBlock(block)
 
 	// M8: Broadcast proposal to peers
+	// SIXTEENTH_REFACTOR: Invoke callback in goroutine to prevent deadlock.
+	// Previously, callback was invoked while holding cs.mu, which would deadlock
+	// if the callback tried to call back into ConsensusState methods.
+	// Using a goroutine breaks the deadlock while maintaining broadcast functionality.
+	// SEVENTEENTH_REFACTOR: Use deep copy to prevent data race between consensus
+	// modifying the proposal and the callback reading it.
 	if cs.onProposal != nil {
-		cs.onProposal(proposal)
+		callback := cs.onProposal
+		proposalCopy := types.CopyProposal(proposal)
+		go callback(proposalCopy)
 	}
 }
 
@@ -783,6 +803,16 @@ func (cs *ConsensusState) finalizeCommitLocked(height int64, commit *gen.Commit)
 		panic(fmt.Sprintf("CONSENSUS CRITICAL: finalizeCommit called with no block at height %d", height))
 	}
 
+	// SIXTEENTH_REFACTOR: Verify block hash matches commit certificate.
+	// This is a critical safety check - we must never apply a block that doesn't
+	// match the commit's block hash. A mismatch would indicate a state machine bug
+	// or could lead to applying the wrong block.
+	blockHash := types.BlockHash(block)
+	if !types.HashEqual(blockHash, commit.BlockHash) {
+		panic(fmt.Sprintf("CONSENSUS CRITICAL: block hash mismatch at height %d: block=%x commit=%x",
+			height, blockHash.Data[:8], commit.BlockHash.Data[:8]))
+	}
+
 	// MF3: Apply block and get validator updates
 	var valUpdates []ValidatorUpdate
 	if cs.blockExecutor != nil {
@@ -790,6 +820,25 @@ func (cs *ConsensusState) finalizeCommitLocked(height int64, commit *gen.Commit)
 		valUpdates, err = cs.blockExecutor.ApplyBlock(block, commit)
 		if err != nil {
 			panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to apply committed block at height %d: %v", height, err))
+		}
+	}
+
+	// SIXTEENTH_REFACTOR: Compute new validator set BEFORE any state changes.
+	// Previously, height/round/step were updated before validator set, so a panic
+	// during validator update would leave state inconsistent (new height but old validators).
+	// Now we compute the new validator set first, and only then update all state together.
+	var newValSet *types.ValidatorSet
+	var valSetErr error
+	if len(valUpdates) > 0 {
+		newValSet, valSetErr = cs.applyValidatorUpdates(valUpdates)
+		if valSetErr != nil {
+			panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to apply validator updates at height %d: %v", height, valSetErr))
+		}
+	} else {
+		// CR4: Create new validator set with incremented priority (immutable pattern)
+		newValSet, valSetErr = cs.validatorSet.WithIncrementedPriority(1)
+		if valSetErr != nil {
+			panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to update validator set: %v", valSetErr))
 		}
 	}
 
@@ -801,7 +850,7 @@ func (cs *ConsensusState) finalizeCommitLocked(height int64, commit *gen.Commit)
 		}
 	}
 
-	// Move to next height
+	// Move to next height - all state changes happen together after validator set is ready
 	cs.height = height + 1
 	cs.round = 0
 	cs.step = RoundStepNewHeight
@@ -812,22 +861,7 @@ func (cs *ConsensusState) finalizeCommitLocked(height int64, commit *gen.Commit)
 	cs.validRound = -1
 	cs.validBlock = nil
 	cs.lastCommit = commit
-
-	// MF3: Apply validator updates if any
-	if len(valUpdates) > 0 {
-		newValSet, err := cs.applyValidatorUpdates(valUpdates)
-		if err != nil {
-			panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to apply validator updates at height %d: %v", height, err))
-		}
-		cs.validatorSet = newValSet
-	} else {
-		// CR4: Create new validator set with incremented priority (immutable pattern)
-		newValSet, err := cs.validatorSet.WithIncrementedPriority(1)
-		if err != nil {
-			panic(fmt.Sprintf("CONSENSUS CRITICAL: failed to update validator set: %v", err))
-		}
-		cs.validatorSet = newValSet
-	}
+	cs.validatorSet = newValSet
 
 	// Reset votes
 	cs.votes.Reset(cs.height, cs.validatorSet)
@@ -1049,8 +1083,14 @@ func (cs *ConsensusState) signAndSendVoteLocked(voteType types.VoteType, blockHa
 	}
 
 	// M8: Broadcast vote to peers
+	// SIXTEENTH_REFACTOR: Invoke callback in goroutine to prevent deadlock.
+	// Same fix as for onProposal callback above.
+	// SEVENTEENTH_REFACTOR: Use deep copy to prevent data race between consensus
+	// modifying the vote and the callback reading it.
 	if cs.onVote != nil {
-		cs.onVote(vote)
+		callback := cs.onVote
+		voteCopy := types.CopyVote(vote)
+		go callback(voteCopy)
 	}
 }
 
