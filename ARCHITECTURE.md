@@ -539,6 +539,28 @@ const (
 
 ## Integration Points
 
+### Raspberry Integration
+
+Leaderberry serves as the consensus engine for the Raspberry blockchain node, working in conjunction with:
+
+- **Blockberry**: Node framework providing networking, storage, and peer management
+- **Looseberry**: DAG mempool providing certified transaction batches
+- **Application**: User-defined state machine for transaction execution
+
+The integration flow:
+
+```
+Application
+    ↓ (CheckTx for validation)
+Looseberry (DAG Mempool)
+    ↓ (ReapCertifiedBatches)
+Leaderberry (BFT Consensus)
+    ↓ (ExecuteTx for each batch)
+Application
+    ↓ (Commit for finalization)
+Blockberry (Storage)
+```
+
 ### Blockberry Integration
 
 Leaderberry implements the `BFTConsensus` interface from blockberry:
@@ -621,52 +643,116 @@ func (e *Engine) buildBlockFromDAG(height int64) (*Block, error) {
 
 ### Application Integration
 
-Block execution through blockberry ABI:
+The Application interface defines how Leaderberry interacts with the user-defined state machine:
+
+```go
+type Application interface {
+    // Transaction validation (called by Looseberry before batching)
+    // MUST be deterministic across all nodes
+    // Leaderberry does NOT call this - it's called by Looseberry during AddTx()
+    CheckTx(ctx context.Context, tx []byte) error
+
+    // Block lifecycle (called by Leaderberry during consensus)
+    BeginBlock(ctx context.Context, header *BlockHeader) error
+    ExecuteTx(ctx context.Context, tx []byte) (*TxResult, error)
+    EndBlock(ctx context.Context) (*EndBlockResult, error)
+    Commit(ctx context.Context) (*CommitResult, error)
+
+    // Queries (called by RPC layer, not by consensus)
+    Query(ctx context.Context, path string, data []byte, height int64) (*QueryResult, error)
+
+    // Initialization
+    InitChain(ctx context.Context, validators []Validator, appState []byte) error
+}
+
+type TxResult struct {
+    Code      uint32            // 0 = success, non-zero = error
+    Data      []byte            // Result data
+    Log       string            // Human-readable log
+    GasWanted int64
+    GasUsed   int64
+    Events    []Event
+}
+
+type EndBlockResult struct {
+    ValidatorUpdates []ValidatorUpdate   // Changes to validator set
+    ConsensusParams  *ConsensusParams    // Updated consensus parameters
+    Events           []Event
+}
+
+type CommitResult struct {
+    AppHash []byte              // New application state root
+}
+```
+
+**Important**: Leaderberry treats transaction payloads as opaque `[]byte`. The consensus engine only handles:
+- Transaction ordering (via Looseberry batches)
+- Authorization verification (for named accounts)
+- Block finalization
+
+Transaction content interpretation, execution logic, and state transitions are the Application's responsibility.
+
+Block execution flow:
 
 ```go
 func (e *Engine) executeBlock(block *Block) error {
     ctx := context.Background()
 
-    // Begin block
-    header := &abi.BlockHeader{
-        Height:   uint64(block.Header.Height),
-        Time:     block.Header.Time,
-        Proposer: string(block.Header.Proposer),
-    }
-    if err := e.app.BeginBlock(ctx, header); err != nil {
+    // 1. Begin block
+    if err := e.app.BeginBlock(ctx, &block.Header); err != nil {
         return err
     }
 
-    // Execute transactions from batch certificates
+    // 2. Execute transactions from batch certificates
+    // Note: Transactions were already validated by Looseberry's CheckTx
     for _, batchCert := range block.Data.BatchCertificates {
         for _, batch := range batchCert.Batches {
             for _, tx := range batch.Transactions {
-                abiTx := &abi.Transaction{
-                    Hash: tx.Hash()[:],
-                    Data: tx.Data,
+                result, err := e.app.ExecuteTx(ctx, tx)
+                if err != nil {
+                    return fmt.Errorf("ExecuteTx failed: %w", err)
                 }
-                result := e.app.ExecuteTx(ctx, abiTx)
-                if result.Code != abi.CodeOK {
-                    // Log but continue - tx already certified
+
+                if result.Code != 0 {
+                    // Non-zero code indicates execution failure
+                    // This is a consensus failure since CheckTx passed
+                    e.logger.Warn("Transaction execution failed",
+                        "code", result.Code,
+                        "log", result.Log)
                 }
             }
         }
     }
 
-    // End block
-    endResult := e.app.EndBlock(ctx)
-
-    // Apply validator updates
-    if len(endResult.ValidatorUpdates) > 0 {
-        e.applyValidatorUpdates(endResult.ValidatorUpdates)
+    // 3. End block
+    endResult, err := e.app.EndBlock(ctx)
+    if err != nil {
+        return fmt.Errorf("EndBlock failed: %w", err)
     }
 
-    // Commit
-    commitResult := e.app.Commit(ctx)
+    // 4. Apply validator updates (if any)
+    if len(endResult.ValidatorUpdates) > 0 {
+        if err := e.applyValidatorUpdates(endResult.ValidatorUpdates); err != nil {
+            return fmt.Errorf("validator update failed: %w", err)
+        }
+
+        // Notify Looseberry of validator set change
+        e.looseberry.UpdateValidatorSet(e.validatorSet)
+    }
+
+    // 5. Commit application state
+    commitResult, err := e.app.Commit(ctx)
+    if err != nil {
+        return fmt.Errorf("Commit failed: %w", err)
+    }
+
     e.lastAppHash = commitResult.AppHash
 
-    // Notify DAG mempool
-    e.dagMempool.NotifyCommitted(block.Header.DAGRound)
+    // 6. Notify Looseberry for garbage collection
+    e.looseberry.NotifyCommitted(block.Header.DAGRound)
+
+    // 7. Save block (handled by blockberry)
+    // Blockberry's OnBlockCommit callback saves to blockstore
 
     return nil
 }
