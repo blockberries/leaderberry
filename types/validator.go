@@ -203,6 +203,29 @@ func (vs *ValidatorSet) getProposer() *NamedValidator {
 	return proposer
 }
 
+// GetProposerForRound returns the proposer for a given round.
+// TWENTY_EIGHTH_REFACTOR: Implements round-aware proposer selection per ARCHITECTURE.md.
+// For round 0, returns the pre-computed proposer.
+// For round > 0, computes the proposer by advancing priorities `round` times.
+// This fixes a CRITICAL liveness bug where the same proposer was used for all rounds,
+// causing consensus to stall if the round 0 proposer was offline or Byzantine.
+func (vs *ValidatorSet) GetProposerForRound(round int32) *NamedValidator {
+	if round <= 0 {
+		// Round 0 (or invalid negative round): use current proposer
+		return CopyValidator(vs.Proposer)
+	}
+
+	// For round > 0, create a temporary copy and advance priorities
+	// We use WithIncrementedPriority which is the immutable pattern for thread-safety
+	tempVS, err := vs.WithIncrementedPriority(round)
+	if err != nil {
+		// Should never fail for a valid validator set, but return current proposer as fallback
+		return CopyValidator(vs.Proposer)
+	}
+
+	return CopyValidator(tempVS.Proposer)
+}
+
 // GetByName returns a validator by name.
 // ELEVENTH_REFACTOR: Returns a deep copy to prevent callers from corrupting state.
 func (vs *ValidatorSet) GetByName(name string) *NamedValidator {

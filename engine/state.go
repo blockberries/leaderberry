@@ -414,7 +414,10 @@ func (cs *ConsensusState) enterNewRoundLocked(height int64, round int32) {
 	})
 
 	// Check if we're the proposer
-	proposer := cs.validatorSet.Proposer
+	// TWENTY_EIGHTH_REFACTOR: Use GetProposerForRound to fix liveness bug.
+	// Previously used cs.validatorSet.Proposer which doesn't change with rounds,
+	// causing consensus to stall if round 0 proposer is offline.
+	proposer := cs.validatorSet.GetProposerForRound(cs.round)
 	// H2: Check proposer is not nil before accessing fields
 	if proposer == nil {
 		log.Printf("[WARN] consensus: no proposer set for height %d round %d", cs.height, cs.round)
@@ -427,6 +430,14 @@ func (cs *ConsensusState) enterNewRoundLocked(height int64, round int32) {
 
 // createAndSendProposalLocked creates and broadcasts a proposal (caller must hold lock)
 func (cs *ConsensusState) createAndSendProposalLocked() {
+	// TWENTY_EIGHTH_REFACTOR: Get round-aware proposer for proposal creation.
+	// This fixes the liveness bug where all rounds used the same proposer.
+	proposer := cs.validatorSet.GetProposerForRound(cs.round)
+	if proposer == nil {
+		log.Printf("[WARN] consensus: no proposer for round %d, cannot create proposal", cs.round)
+		return
+	}
+
 	// Get block to propose
 	var block *gen.Block
 
@@ -446,7 +457,7 @@ func (cs *ConsensusState) createAndSendProposalLocked() {
 		block, err = cs.blockExecutor.CreateProposalBlock(
 			cs.height,
 			cs.lastCommit,
-			cs.validatorSet.Proposer.Name,
+			proposer.Name,
 		)
 		if err != nil {
 			log.Printf("[WARN] consensus: failed to create proposal block: %v", err)
@@ -461,7 +472,7 @@ func (cs *ConsensusState) createAndSendProposalLocked() {
 		Timestamp: time.Now().UnixNano(),
 		Block:     *block,
 		PolRound:  cs.validRound,
-		Proposer:  cs.validatorSet.Proposer.Name,
+		Proposer:  proposer.Name,
 	}
 
 	// Add POL votes if we have them
@@ -531,10 +542,13 @@ func (cs *ConsensusState) handleProposal(proposal *gen.Proposal) {
 	}
 
 	// Verify proposer
-	proposer := cs.validatorSet.Proposer
+	// TWENTY_EIGHTH_REFACTOR: Use GetProposerForRound to verify against correct round's proposer.
+	// This is critical for liveness - proposals must be verified against the proposer for THIS round,
+	// not the round 0 proposer.
+	proposer := cs.validatorSet.GetProposerForRound(proposal.Round)
 	// H2: Check proposer is not nil before accessing fields
 	if proposer == nil {
-		log.Printf("[WARN] consensus: no proposer set, cannot verify proposal")
+		log.Printf("[WARN] consensus: no proposer for round %d, cannot verify proposal", proposal.Round)
 		return
 	}
 	if !types.AccountNameEqual(proposal.Proposer, proposer.Name) {

@@ -233,3 +233,145 @@ func TestValidatorSetHash(t *testing.T) {
 		t.Error("same validator set should produce same hash")
 	}
 }
+
+func TestValidatorSetGetProposerForRound(t *testing.T) {
+	// Create validators with different voting powers to make rotation predictable
+	vals := []*NamedValidator{
+		makeValidator("alice", 100),
+		makeValidator("bob", 200),
+		makeValidator("carol", 100),
+	}
+
+	vs, err := NewValidatorSet(vals)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	originalProposer := vs.Proposer
+	originalProposerName := AccountNameString(originalProposer.Name)
+
+	// Round 0 should return current proposer
+	proposer0 := vs.GetProposerForRound(0)
+	if proposer0 == nil {
+		t.Fatal("GetProposerForRound(0) returned nil")
+	}
+	if AccountNameString(proposer0.Name) != originalProposerName {
+		t.Errorf("Round 0 should return same proposer, expected %s, got %s",
+			originalProposerName, AccountNameString(proposer0.Name))
+	}
+
+	// Original validator set should not be mutated
+	if AccountNameString(vs.Proposer.Name) != originalProposerName {
+		t.Error("Original validator set was mutated after GetProposerForRound(0)")
+	}
+
+	// Higher rounds should rotate proposer (with these voting powers, bob should dominate initially)
+	// Track proposers for multiple rounds to verify rotation
+	proposers := make([]string, 5)
+	for i := int32(0); i < 5; i++ {
+		p := vs.GetProposerForRound(i)
+		if p == nil {
+			t.Fatalf("GetProposerForRound(%d) returned nil", i)
+		}
+		proposers[i] = AccountNameString(p.Name)
+	}
+
+	// Verify original validator set is still unchanged
+	if AccountNameString(vs.Proposer.Name) != originalProposerName {
+		t.Error("Original validator set was mutated after multiple GetProposerForRound calls")
+	}
+
+	// With voting powers alice=100, bob=200, carol=100, we expect rotation
+	// Check that at least one round has a different proposer (verifies rotation works)
+	hasDifferentProposer := false
+	for i := 1; i < len(proposers); i++ {
+		if proposers[i] != proposers[0] {
+			hasDifferentProposer = true
+			break
+		}
+	}
+	if !hasDifferentProposer {
+		t.Errorf("Expected proposer rotation across 5 rounds, but all proposers were %s", proposers[0])
+	}
+
+	// Verify determinism - calling again with same round should return same proposer
+	for i := int32(0); i < 5; i++ {
+		p := vs.GetProposerForRound(i)
+		if AccountNameString(p.Name) != proposers[i] {
+			t.Errorf("GetProposerForRound(%d) not deterministic: expected %s, got %s",
+				i, proposers[i], AccountNameString(p.Name))
+		}
+	}
+}
+
+func TestValidatorSetGetProposerForRoundNegative(t *testing.T) {
+	vals := []*NamedValidator{
+		makeValidator("alice", 100),
+		makeValidator("bob", 100),
+	}
+
+	vs, err := NewValidatorSet(vals)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Negative round should return current proposer (defensive behavior)
+	proposer := vs.GetProposerForRound(-1)
+	if proposer == nil {
+		t.Fatal("GetProposerForRound(-1) returned nil")
+	}
+	if AccountNameString(proposer.Name) != AccountNameString(vs.Proposer.Name) {
+		t.Error("Negative round should return same proposer as round 0")
+	}
+}
+
+func TestValidatorSetGetProposerForRoundReturnsDeepCopy(t *testing.T) {
+	vals := []*NamedValidator{
+		makeValidator("alice", 100),
+		makeValidator("bob", 100),
+	}
+
+	vs, err := NewValidatorSet(vals)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Get proposer and modify it
+	proposer := vs.GetProposerForRound(0)
+	originalPriority := vs.Proposer.ProposerPriority
+
+	// Modify the returned proposer
+	proposer.ProposerPriority = 999999
+
+	// Original should be unchanged
+	if vs.Proposer.ProposerPriority != originalPriority {
+		t.Error("GetProposerForRound should return a deep copy, but original was mutated")
+	}
+}
+
+func TestValidatorSetGetProposerForRoundRotation(t *testing.T) {
+	// Test with equal voting powers - should rotate through all validators
+	vals := []*NamedValidator{
+		makeValidator("alice", 100),
+		makeValidator("bob", 100),
+		makeValidator("carol", 100),
+	}
+
+	vs, err := NewValidatorSet(vals)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// With equal voting powers, proposer should rotate through all validators
+	// Track unique proposers over several rounds
+	seen := make(map[string]bool)
+	for i := int32(0); i < 10; i++ {
+		p := vs.GetProposerForRound(i)
+		seen[AccountNameString(p.Name)] = true
+	}
+
+	// Should see all 3 validators as proposer at some point
+	if len(seen) != 3 {
+		t.Errorf("Expected all 3 validators to be proposer at some point, saw %d: %v", len(seen), seen)
+	}
+}
