@@ -143,3 +143,14 @@ func CopySignature(s Signature) Signature {
 	copy(copied, s.Data)
 	return Signature{Data: copied}
 }
+
+// CopyPublicKey returns a deep copy of a public key
+// TWENTY_FIRST_REFACTOR: Added to support deep copy pattern for GetPubKey
+func CopyPublicKey(pk PublicKey) PublicKey {
+	if len(pk.Data) == 0 {
+		return PublicKey{}
+	}
+	copied := make([]byte, len(pk.Data))
+	copy(copied, pk.Data)
+	return PublicKey{Data: copied}
+}

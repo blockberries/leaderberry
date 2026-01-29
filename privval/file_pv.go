@@ -1,6 +1,7 @@
 package privval
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/json"
@@ -158,6 +159,12 @@ func (pv *FilePV) loadKeyStrict() error {
 		return fmt.Errorf("invalid private key size: %d (expected %d)", len(key.PrivKey), ed25519.PrivateKeySize)
 	}
 
+	// TWENTY_FIRST_REFACTOR: Verify public key matches private key
+	// In Ed25519, the private key (64 bytes) embeds the public key in bytes [32:64]
+	if !bytes.Equal(key.PubKey, key.PrivKey[32:]) {
+		return fmt.Errorf("public key mismatch with private key")
+	}
+
 	pv.pubKey = types.MustNewPublicKey(key.PubKey)
 	pv.privKey = key.PrivKey
 
@@ -191,6 +198,12 @@ func (pv *FilePV) loadKey() error {
 	}
 	if len(key.PrivKey) != ed25519.PrivateKeySize {
 		return fmt.Errorf("invalid private key size: %d", len(key.PrivKey))
+	}
+
+	// TWENTY_FIRST_REFACTOR: Verify public key matches private key
+	// In Ed25519, the private key (64 bytes) embeds the public key in bytes [32:64]
+	if !bytes.Equal(key.PubKey, key.PrivKey[32:]) {
+		return fmt.Errorf("public key mismatch with private key")
 	}
 
 	// Size already validated above, safe to use Must
@@ -437,8 +450,9 @@ func (pv *FilePV) saveState() error {
 }
 
 // GetPubKey returns the public key
+// TWENTY_FIRST_REFACTOR: Returns a deep copy to prevent external modification
 func (pv *FilePV) GetPubKey() types.PublicKey {
-	return pv.pubKey
+	return types.CopyPublicKey(pv.pubKey)
 }
 
 // GetAddress returns the validator address

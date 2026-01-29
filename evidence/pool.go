@@ -117,6 +117,11 @@ func (p *Pool) CheckVote(vote *gen.Vote, valSet *types.ValidatorSet, chainID str
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// TWENTY_FIRST_REFACTOR: Validate valSet is non-nil (defensive programming)
+	if valSet == nil {
+		return nil, errors.New("nil validator set")
+	}
+
 	// SEVENTH_REFACTOR: Verify vote signature before processing
 	// This prevents attackers from injecting fake votes to fill memory or
 	// trigger false equivocation detection.

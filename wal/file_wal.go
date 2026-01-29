@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -65,9 +66,23 @@ func NewFileWAL(dir string) (*FileWAL, error) {
 }
 
 // NewFileWALWithOptions creates a new file-based WAL with custom max segment size
+// TWENTY_FIRST_REFACTOR: Added path traversal validation for security
 func NewFileWALWithOptions(dir string, maxSegSize int64) (*FileWAL, error) {
+	// Validate and clean the directory path
+	cleanDir := filepath.Clean(dir)
+
+	// TWENTY_FIRST_REFACTOR: Ensure it's an absolute path to prevent relative path attacks
+	if !filepath.IsAbs(cleanDir) {
+		return nil, fmt.Errorf("WAL directory must be absolute path: %s", dir)
+	}
+
+	// TWENTY_FIRST_REFACTOR: Check for path traversal components
+	if strings.Contains(cleanDir, "..") {
+		return nil, fmt.Errorf("WAL directory contains invalid path components: %s", dir)
+	}
+
 	// Create directory if it doesn't exist
-	if err := os.MkdirAll(dir, walDirPerm); err != nil {
+	if err := os.MkdirAll(cleanDir, walDirPerm); err != nil {
 		return nil, fmt.Errorf("failed to create WAL directory: %w", err)
 	}
 
@@ -76,13 +91,14 @@ func NewFileWALWithOptions(dir string, maxSegSize int64) (*FileWAL, error) {
 	}
 
 	return &FileWAL{
-		dir:        dir,
+		dir:        cleanDir,
 		maxSegSize: maxSegSize,
 		group: &Group{
-			Dir:     dir,
+			Dir:     cleanDir,
 			Prefix:  "wal",
 			MaxSize: maxSegSize,
 		},
+		heightIndex: make(map[int64]int),
 	}, nil
 }
 
@@ -503,8 +519,19 @@ func (w *FileWAL) searchSegmentForEndHeight(segmentIndex int, height int64) (Rea
 }
 
 // Group returns the WAL group
+// TWENTY_FIRST_REFACTOR: Returns a copy to prevent external mutation
 func (w *FileWAL) Group() *Group {
-	return w.group
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// Return a copy to prevent external modification of internal state
+	return &Group{
+		Dir:      w.group.Dir,
+		Prefix:   w.group.Prefix,
+		MaxSize:  w.group.MaxSize,
+		MinIndex: w.group.MinIndex,
+		MaxIndex: w.group.MaxIndex,
+	}
 }
 
 // Checkpoint deletes WAL segments that only contain heights <= checkpointHeight.

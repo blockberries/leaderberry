@@ -203,10 +203,26 @@ func (e *Engine) GetValidatorSet() *types.ValidatorSet {
 }
 
 // UpdateValidatorSet updates the validator set (typically after a block is committed)
+// TWENTY_FIRST_REFACTOR: Deep copy validator set to prevent external modification
 func (e *Engine) UpdateValidatorSet(valSet *types.ValidatorSet) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.validatorSet = valSet
+
+	// Validate input
+	if valSet == nil {
+		return
+	}
+
+	// Deep copy to prevent external modification of internal state
+	vsCopy, err := valSet.Copy()
+	if err != nil {
+		// Log error but don't panic - validation issues are not consensus-breaking here
+		// since the validator set has already been validated before being passed
+		log.Printf("[ERROR] engine: failed to copy validator set: %v", err)
+		return
+	}
+
+	e.validatorSet = vsCopy
 }
 
 // IsValidator returns true if the local node is a validator

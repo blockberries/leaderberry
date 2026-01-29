@@ -430,7 +430,106 @@ The dramatic reduction in bugs found (iterations 1-19: ~85 bugs → iteration 20
 - `ARCHITECTURE.md` - System design and component documentation
 - `CLAUDE.md` - Development guidelines and build instructions
 
+---
+
+## 21st Review: Three-Round Deep Iteration (2026-01-29)
+
+The 21st code review iteration consisted of 3 comprehensive rounds of bug hunting across the entire codebase. Each round involved multi-agent parallel analysis followed by verification and fixes.
+
+### Round 1: Initial Deep Scan
+
+**Methodology**: 5 specialized agents performed exhaustive line-by-line review of all components in parallel.
+
+**Verified Bugs Found**: 7 (1 CRITICAL, 3 HIGH, 3 MEDIUM)
+
+#### CRITICAL Issues
+
+##### 1. PrivVal: No File Locking (Multi-Process Double-Sign)
+**File**: `privval/file_pv.go`
+**Severity**: CRITICAL
+**Impact**: Multiple validator processes can use the same key simultaneously, causing double-signing.
+
+**Attack Scenario**:
+```
+Process A: Signs vote for block X at H=100, R=0
+Process A: Updates in-memory state
+[RACE WINDOW]
+Process B: Loads old state from file (before A persists)
+Process A: Persists state
+Process B: Signs vote for block Y at H=100, R=0
+Process B: Persists state
+Result: DOUBLE SIGN at same H/R/S → Byzantine fault → validator slashing
+```
+
+**Status**: HIGH PRIORITY - Must be fixed before production deployment
+**Fix Status**: PENDING - Requires platform-specific syscall.Flock implementation with proper testing
+
+#### HIGH Severity Issues
+
+##### 2. Engine: UpdateValidatorSet Deep Copy Violation
+**File**: `engine/engine.go:209`
+**Severity**: HIGH
+**Impact**: Stores validator set pointer directly without deep copying. External code can modify validator set after passing it, corrupting internal state.
+
+**Violates**: Deep Copy Pattern (established in CODE_REVIEW.md)
+**Fix Status**: FIXED - Added deep copy via valSet.Copy() with nil validation and error handling
+
+##### 3. PrivVal: Public/Private Key Mismatch Not Validated
+**File**: `privval/file_pv.go:161-162, 197-198`
+**Severity**: HIGH
+**Impact**: Ed25519 private keys embed the public key in bytes 32-64. Code doesn't verify that PubKey matches PrivKey[32:]. Attacker with file access could create mismatched keys, causing all signatures to fail verification → complete validator failure.
+**Fix Status**: FIXED - Added bytes.Equal validation in both loadKeyStrict() and loadKey()
+
+##### 4. WAL: Path Traversal Vulnerability
+**File**: `wal/file_wal.go:70, 79`
+**Severity**: HIGH (Security)
+**Impact**: No validation of `dir` parameter for path traversal attacks. Attacker who controls the `dir` parameter could create WAL files anywhere on the filesystem.
+
+**Example Attack**:
+```go
+wal, _ := NewFileWAL("../../../../etc/cron.d")
+```
+**Fix Status**: FIXED - Added filepath.Clean(), filepath.IsAbs() check, and ".." component detection
+
+#### MEDIUM Severity Issues
+
+##### 5. Evidence: CheckVote Missing Nil ValSet Check
+**File**: `evidence/pool.go:123`
+**Severity**: MEDIUM
+**Impact**: Dereferences valSet without checking if it's nil. Will panic on nil valSet parameter, causing consensus failure. By contrast, `VerifyDuplicateVoteEvidence` has proper nil check at lines 355-357.
+**Fix Status**: FIXED - Added nil check at function entry with error return
+
+##### 6. PrivVal: GetPubKey Returns Shared Memory
+**File**: `privval/file_pv.go:441`
+**Severity**: MEDIUM
+**Impact**: Returns `pv.pubKey` directly. Since `PublicKey` has `Data []byte`, returning by value shares the underlying array. Violates deep copy pattern - caller could modify returned value and corrupt internal state.
+**Fix Status**: FIXED - Added types.CopyPublicKey() function and updated GetPubKey() to use it
+
+##### 7. WAL: Group() Returns Internal Pointer
+**File**: `wal/file_wal.go:507`
+**Severity**: MEDIUM
+**Impact**: Returns `w.group` pointer directly without locking or copying. External code can corrupt WAL state by modifying the returned Group.
+
+**Example Corruption**:
+```go
+g := wal.Group()
+g.MaxIndex = 999999  // Corrupts WAL state
+```
+
+**Violates**: Deep Copy Pattern (established in CODE_REVIEW.md)
+**Fix Status**: FIXED - Returns a new Group struct with all fields copied, protected by mutex lock
+
+### False Positives Identified (Round 1)
+
+| Issue | Reason Not a Bug |
+|-------|------------------|
+| WAL buildIndex file handle leak | If os.Open fails, file handle is nil/invalid and doesn't need closing |
+| Types package issues | 0 bugs found - component thoroughly hardened through previous reviews |
+
+---
+
 ## Changelog
 
+- **2026-01-29**: 21st Review (Round 1) - Three-round deep iteration, 7 bugs found (1 CRITICAL, 3 HIGH, 3 MEDIUM)
 - **2026-01-29**: 20th Review - Multi-agent ultrathinking analysis, 8 bugs fixed (1 HIGH, 5 MEDIUM, 2 LOW)
 - **Prior**: Reviews 1-19 fixed ~85 bugs across consensus safety, double-sign prevention, concurrency, WAL, evidence, validation, and overflow categories
