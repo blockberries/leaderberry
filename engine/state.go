@@ -668,7 +668,51 @@ func (cs *ConsensusState) validatePOL(proposal *gen.Proposal) error {
 	return nil
 }
 
+// canUnlock checks if we can unlock from our current locked block to prevote for a different
+// block proposed with a valid POL (Proof-of-Lock) from a later round.
+// ARCHITECTURE_VERIFICATION_FIX: This implements the canUnlock logic from ARCHITECTURE.md
+// that was previously missing, causing a liveness bug where locked validators could not
+// switch to a different block even with a valid POL from a later round.
+//
+// Per ARCHITECTURE.md (lines 882-888):
+//
+//	func (cs *ConsensusState) canUnlock(proposal *Proposal) bool {
+//	    return proposal.POLRound > cs.LockedRound &&
+//	           cs.verifyPOL(proposal.POLVotes, proposal.Block.Hash(), proposal.POLRound)
+//	}
+//
+// Safety: This does NOT update our lock - the lock is only updated in enterPrecommitLocked
+// when we see 2/3+ prevotes. This just allows us to prevote for a different block.
+func (cs *ConsensusState) canUnlock(proposal *gen.Proposal) bool {
+	// No proposal means nothing to unlock for
+	if proposal == nil {
+		return false
+	}
+
+	// No POL means no proof that others have moved on
+	if proposal.PolRound < 0 {
+		return false
+	}
+
+	// POL must be from a round AFTER our locked round
+	// If we locked in round 3, we need POL from round 4+ to unlock
+	if proposal.PolRound <= cs.lockedRound {
+		return false
+	}
+
+	// Validate that the POL is actually valid (2/3+ prevotes for this block)
+	if err := cs.validatePOL(proposal); err != nil {
+		log.Printf("[DEBUG] consensus: canUnlock POL validation failed: %v", err)
+		return false
+	}
+
+	return true
+}
+
 // enterPrevoteLocked enters the prevote step (internal, caller must hold lock)
+// ARCHITECTURE_VERIFICATION_FIX: Updated to implement POL-based unlock logic per ARCHITECTURE.md.
+// Previously, locked validators always prevoted for their locked block, which could cause
+// liveness issues if the network moved on with a valid POL for a different block.
 func (cs *ConsensusState) enterPrevoteLocked(height int64, round int32) {
 	if cs.height != height || cs.round != round || cs.step >= RoundStepPrevote {
 		return
@@ -676,19 +720,36 @@ func (cs *ConsensusState) enterPrevoteLocked(height int64, round int32) {
 
 	cs.step = RoundStepPrevote
 
-	// Decide what to prevote for
+	// Decide what to prevote for using the decidePrevote logic from ARCHITECTURE.md
 	var blockHash *types.Hash
 
 	if cs.lockedBlock != nil {
-		// Prevote for locked block
-		hash := types.BlockHash(cs.lockedBlock)
-		blockHash = &hash
+		// We are locked on a block - apply locking rules
+		lockedHash := types.BlockHash(cs.lockedBlock)
+
+		if cs.proposalBlock != nil {
+			proposalHash := types.BlockHash(cs.proposalBlock)
+
+			if types.HashEqual(proposalHash, lockedHash) {
+				// Case 1: Proposal matches our locked block - prevote for it
+				blockHash = &lockedHash
+			} else if cs.canUnlock(cs.proposal) {
+				// Case 2: Proposal is different BUT has valid POL from a later round
+				// We can prevote for this block (but do NOT update our lock yet -
+				// lock is only updated in enterPrecommitLocked when we see 2/3+ prevotes)
+				log.Printf("[INFO] consensus: unlocking via POL from round %d (locked in round %d)",
+					cs.proposal.PolRound, cs.lockedRound)
+				blockHash = &proposalHash
+			}
+			// Case 3: Proposal is different with no valid POL - prevote nil (blockHash stays nil)
+		}
+		// No proposal while locked - prevote nil
 	} else if cs.proposalBlock != nil {
-		// Prevote for proposal
+		// Not locked - prevote for proposal
 		hash := types.BlockHash(cs.proposalBlock)
 		blockHash = &hash
 	}
-	// else prevote nil
+	// else not locked and no proposal - prevote nil
 
 	cs.signAndSendVoteLocked(types.VoteTypePrevote, blockHash)
 }
