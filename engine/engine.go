@@ -380,6 +380,12 @@ func (e *Engine) GetMetrics() (*Metrics, error) {
 		return nil, ErrNotStarted
 	}
 
+	// TWENTY_SEVENTH_REFACTOR: Added nil check for validatorSet to prevent panic.
+	// Consistent with GetValidatorSet() and GetProposer() which also have this check.
+	if e.validatorSet == nil {
+		return nil, ErrNotInitialized
+	}
+
 	height, round, step := e.state.GetState()
 	proposer := e.validatorSet.Proposer
 

@@ -531,7 +531,8 @@ func (pv *FilePV) SignVote(chainID string, vote *gen.Vote) error {
 	// Check for double-sign
 	if err := pv.lastSignState.CheckHRS(vote.Height, vote.Round, step); err != nil {
 		// Check if it's the same vote (idempotent re-signing)
-		if err == ErrDoubleSign && pv.isSameVote(vote) {
+		// TWENTY_SEVENTH_REFACTOR: Pass chainID to verify it matches the original signing
+		if err == ErrDoubleSign && pv.isSameVote(chainID, vote) {
 			// FIFTEENTH_REFACTOR: Deep copy signature to prevent caller from
 			// corrupting internal state. Previously returned a reference that
 			// shared memory with lastSignState.Signature.
@@ -679,17 +680,26 @@ func (pv *FilePV) isSameProposal(chainID string, proposal *gen.Proposal) bool {
 
 // isSameVote checks if the vote matches the last signed vote.
 // TWELFTH_REFACTOR: Now also checks Timestamp since VoteSignBytes includes it.
-// THIRTEENTH_REFACTOR: Analysis shows current checks are sufficient because:
-// - Type is implicitly checked (same H/R/S means same step, which determines Type)
-// - Height/Round/Step are checked by CheckHRS before isSameVote is called
-// - BlockHash and Timestamp are checked below
-// - Validator/ValidatorIndex are deterministic for a given validator (can't differ)
-// The SignBytesHash field is retained for future use but not required for correctness.
-// SIXTEENTH_REFACTOR: Fixed timestamp==0 bug - now always checks timestamp match.
-func (pv *FilePV) isSameVote(vote *gen.Vote) bool {
-	// SIXTEENTH_REFACTOR: Always check timestamp. Previously, when lastSignState.Timestamp==0
-	// (initial state or migration), any timestamp would pass, returning a cached signature
-	// that wouldn't verify because it was signed with a different timestamp.
+// TWENTY_SEVENTH_REFACTOR: Now uses SignBytesHash comparison like isSameProposal.
+// This ensures chainID is verified, preventing the validator from returning a cached
+// signature signed for a different chain. VoteSignBytes includes chainID in the signed
+// data, so two votes with identical H/R/S/Timestamp/BlockHash but different chainIDs
+// would have different sign bytes and different signatures.
+func (pv *FilePV) isSameVote(chainID string, vote *gen.Vote) bool {
+	// TWENTY_SEVENTH_REFACTOR: If we have SignBytesHash stored, use it for exact comparison.
+	// This catches all differences including chainID (which is part of VoteSignBytes).
+	// This matches isSameProposal behavior for consistency.
+	if pv.lastSignState.SignBytesHash != nil {
+		signBytes := types.VoteSignBytes(chainID, vote)
+		signBytesHash := sha256.Sum256(signBytes)
+		signBytesHashObj := types.MustNewHash(signBytesHash[:])
+		return types.HashEqual(*pv.lastSignState.SignBytesHash, signBytesHashObj)
+	}
+
+	// Fallback for state files that don't have SignBytesHash yet (backward compatibility).
+	// Note: This fallback cannot verify chainID, so it could return wrong cached signature
+	// if called for a different chain. However, this only affects migration from very old
+	// state files. New state files always have SignBytesHash.
 	if pv.lastSignState.Timestamp != vote.Timestamp {
 		return false
 	}

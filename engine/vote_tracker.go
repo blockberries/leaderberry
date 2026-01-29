@@ -196,8 +196,13 @@ func (vs *VoteSet) addVoteInternal(vote *gen.Vote) (bool, error) {
 	// Get or create block votes entry to check per-block overflow
 	key := blockHashKey(vote.BlockHash)
 	bv, ok := vs.votesByBlock[key]
-	if !ok {
-		bv = &blockVotes{blockHash: vote.BlockHash}
+	isNewBlockVotes := !ok
+	if isNewBlockVotes {
+		// TWENTY_SEVENTH_REFACTOR: Create with nil blockHash initially.
+		// We'll set it from the deep-copied vote below to prevent caller
+		// modifications from corrupting bv.blockHash (which is used by
+		// TwoThirdsMajority() and MakeCommit()).
+		bv = &blockVotes{}
 	}
 
 	// Check per-block overflow before modifications
@@ -213,7 +218,9 @@ func (vs *VoteSet) addVoteInternal(vote *gen.Vote) (bool, error) {
 	vs.sum += val.VotingPower
 
 	// Store block votes entry if newly created
-	if !ok {
+	if isNewBlockVotes {
+		// TWENTY_SEVENTH_REFACTOR: Use deep-copied hash to prevent corruption.
+		bv.blockHash = voteCopy.BlockHash
 		vs.votesByBlock[key] = bv
 	}
 	bv.votes = append(bv.votes, voteCopy)

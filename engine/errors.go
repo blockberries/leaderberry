@@ -19,6 +19,8 @@ var (
 	ErrNoPrivValidator    = errors.New("no private validator configured")
 	ErrAlreadyStarted     = errors.New("consensus already started")
 	ErrNotStarted         = errors.New("consensus not started")
+	// TWENTY_SEVENTH_REFACTOR: Error when validator set not initialized
+	ErrNotInitialized     = errors.New("validator set not initialized")
 	ErrInvalidMessage     = errors.New("invalid consensus message")
 	ErrUnknownMessageType = errors.New("unknown consensus message type")
 	// TWELFTH_REFACTOR: Error for stale VoteSet references after Reset()
