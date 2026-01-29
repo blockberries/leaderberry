@@ -184,34 +184,39 @@ func (vs *VoteSet) addVoteInternal(vote *gen.Vote) (bool, error) {
 		return false, ErrConflictingVote // Equivocation!
 	}
 
-	// Add vote
-	// ELEVENTH_REFACTOR: Deep copy the vote before storing to prevent caller
-	// modifications from corrupting internal state. This is consistent with
-	// the defensive copying done in GetVotes() and GetVote().
-	voteCopy := types.CopyVote(vote)
-	vs.votes[voteCopy.ValidatorIndex] = voteCopy
-
-	// TWENTY_SECOND_REFACTOR: Defensive overflow protection
-	// Should never happen due to MaxTotalVotingPower validation and duplicate detection,
-	// but protects against bugs in duplicate detection or validator set management.
+	// TWENTY_FIFTH_REFACTOR: Check overflow BEFORE making any modifications.
+	// Previously overflow checks were after storage, leaving VoteSet in inconsistent
+	// state if overflow was detected (vote stored but not counted).
+	// Check should never fail due to MaxTotalVotingPower validation, but this is
+	// defensive against bugs in duplicate detection or validator set management.
 	if val.VotingPower > 0 && vs.sum > math.MaxInt64-val.VotingPower {
 		return false, fmt.Errorf("voting power sum would overflow (current: %d, adding: %d)", vs.sum, val.VotingPower)
 	}
-	vs.sum += val.VotingPower
 
-	// Track by block hash
-	key := blockHashKey(voteCopy.BlockHash)
+	// Get or create block votes entry to check per-block overflow
+	key := blockHashKey(vote.BlockHash)
 	bv, ok := vs.votesByBlock[key]
 	if !ok {
-		bv = &blockVotes{blockHash: voteCopy.BlockHash}
-		vs.votesByBlock[key] = bv
+		bv = &blockVotes{blockHash: vote.BlockHash}
 	}
-	bv.votes = append(bv.votes, voteCopy)
 
-	// TWENTY_SECOND_REFACTOR: Defensive overflow protection for per-block power
+	// Check per-block overflow before modifications
 	if val.VotingPower > 0 && bv.totalPower > math.MaxInt64-val.VotingPower {
 		return false, fmt.Errorf("block voting power would overflow (current: %d, adding: %d)", bv.totalPower, val.VotingPower)
 	}
+
+	// All checks passed - now make modifications atomically
+	// ELEVENTH_REFACTOR: Deep copy the vote before storing to prevent caller
+	// modifications from corrupting internal state.
+	voteCopy := types.CopyVote(vote)
+	vs.votes[voteCopy.ValidatorIndex] = voteCopy
+	vs.sum += val.VotingPower
+
+	// Store block votes entry if newly created
+	if !ok {
+		vs.votesByBlock[key] = bv
+	}
+	bv.votes = append(bv.votes, voteCopy)
 	bv.totalPower += val.VotingPower
 
 	// Check for 2/3+ majority
@@ -513,6 +518,39 @@ func (hvs *HeightVoteSet) AddVote(vote *gen.Vote) (bool, error) {
 
 	// VoteSet has its own mutex, so nested locking is safe
 	return voteSet.AddVote(vote)
+}
+
+// AddVoteForReplay adds a vote during WAL replay, creating VoteSets on demand.
+// TWENTY_FIFTH_REFACTOR: This method was added to fix votes being silently dropped
+// during replay. Unlike AddVote which uses AddVote(), this uses addVoteForReplay()
+// to skip timestamp validation (votes from before crash can be arbitrarily old).
+func (hvs *HeightVoteSet) AddVoteForReplay(vote *gen.Vote) (bool, error) {
+	hvs.mu.Lock()
+	defer hvs.mu.Unlock()
+
+	if vote.Height != hvs.height {
+		return false, ErrInvalidHeight
+	}
+
+	var voteSet *VoteSet
+	if vote.Type == types.VoteTypePrevote {
+		voteSet = hvs.prevotes[vote.Round]
+		if voteSet == nil {
+			voteSet = newVoteSetWithParent(hvs, vote.Round, types.VoteTypePrevote)
+			hvs.prevotes[vote.Round] = voteSet
+		}
+	} else if vote.Type == types.VoteTypePrecommit {
+		voteSet = hvs.precommits[vote.Round]
+		if voteSet == nil {
+			voteSet = newVoteSetWithParent(hvs, vote.Round, types.VoteTypePrecommit)
+			hvs.precommits[vote.Round] = voteSet
+		}
+	} else {
+		return false, ErrInvalidVote
+	}
+
+	// Use addVoteForReplay to skip timestamp validation during WAL recovery
+	return voteSet.addVoteForReplay(vote)
 }
 
 // Prevotes returns the prevote set for a round

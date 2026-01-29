@@ -265,6 +265,9 @@ func (w *FileWAL) openSegment(index int) error {
 }
 
 // Stop closes the WAL file
+// TWENTY_FIFTH_REFACTOR: Fixed file handle leak - previously if Flush() or Sync()
+// failed, the file was never closed. Now uses first-error pattern to always close
+// the file while preserving the original error.
 func (w *FileWAL) Stop() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -275,17 +278,25 @@ func (w *FileWAL) Stop() error {
 
 	w.started = false
 
+	// Use first-error pattern: always close file, return first error encountered
+	var firstErr error
+
 	// Flush buffer
-	if err := w.buf.Flush(); err != nil {
-		return err
+	if err := w.buf.Flush(); err != nil && firstErr == nil {
+		firstErr = err
 	}
 
-	// Sync and close file
-	if err := w.file.Sync(); err != nil {
-		return err
+	// Sync file
+	if err := w.file.Sync(); err != nil && firstErr == nil {
+		firstErr = err
 	}
 
-	return w.file.Close()
+	// Always close file, even if previous operations failed
+	if err := w.file.Close(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+
+	return firstErr
 }
 
 // Write writes a message to the WAL (buffered)

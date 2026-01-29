@@ -509,7 +509,12 @@ func TestVoteStep(t *testing.T) {
 	if VoteStep(types.VoteTypePrecommit) != StepPrecommit {
 		t.Error("VoteTypePrecommit should map to StepPrecommit")
 	}
-	if VoteStep(99) != 0 {
-		t.Error("unknown vote type should map to 0")
-	}
+	// TWENTY_FIFTH_REFACTOR: VoteStep now panics on invalid vote types
+	// instead of returning 0, since invalid types indicate a programming error.
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("VoteStep should panic on invalid vote type")
+		}
+	}()
+	VoteStep(99)
 }

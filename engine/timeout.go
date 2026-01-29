@@ -227,7 +227,12 @@ func (tt *TimeoutTicker) calculateDuration(ti TimeoutInfo) time.Duration {
 
 // Propose returns the propose timeout for a round
 // M4: Clamps round to prevent overflow
+// TWENTY_FIFTH_REFACTOR: Also clamps negative rounds to prevent unexpectedly short timeouts.
+// This was already done in calculateDuration() but missing from these public methods.
 func (tt *TimeoutTicker) Propose(round int32) time.Duration {
+	if round < 0 {
+		round = 0
+	}
 	if round > MaxRoundForTimeout {
 		round = MaxRoundForTimeout
 	}
@@ -236,7 +241,11 @@ func (tt *TimeoutTicker) Propose(round int32) time.Duration {
 
 // Prevote returns the prevote wait timeout for a round
 // M4: Clamps round to prevent overflow
+// TWENTY_FIFTH_REFACTOR: Also clamps negative rounds to prevent unexpectedly short timeouts.
 func (tt *TimeoutTicker) Prevote(round int32) time.Duration {
+	if round < 0 {
+		round = 0
+	}
 	if round > MaxRoundForTimeout {
 		round = MaxRoundForTimeout
 	}
@@ -245,7 +254,11 @@ func (tt *TimeoutTicker) Prevote(round int32) time.Duration {
 
 // Precommit returns the precommit wait timeout for a round
 // M4: Clamps round to prevent overflow
+// TWENTY_FIFTH_REFACTOR: Also clamps negative rounds to prevent unexpectedly short timeouts.
 func (tt *TimeoutTicker) Precommit(round int32) time.Duration {
+	if round < 0 {
+		round = 0
+	}
 	if round > MaxRoundForTimeout {
 		round = MaxRoundForTimeout
 	}

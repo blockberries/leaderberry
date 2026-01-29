@@ -145,12 +145,15 @@ func NewPartSetFromHeader(header BlockPartSetHeader) (*PartSet, error) {
 }
 
 // Header returns the part set header
+// TWENTY_FIFTH_REFACTOR: Returns a deep copy of Hash to prevent callers from
+// corrupting internal state. Previously shared the underlying Data slice.
+// This is consistent with other getter methods like GetPart() and GetData().
 func (ps *PartSet) Header() BlockPartSetHeader {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 	return BlockPartSetHeader{
 		Total: ps.total,
-		Hash:  ps.hash,
+		Hash:  *CopyHash(&ps.hash),
 	}
 }
 

@@ -212,13 +212,21 @@ func (cs *ConsensusState) ReplayCatchup(targetHeight int64) error {
 	// Note: lockedBlock and validBlock remain nil - they'll be restored when
 	// we receive a proposal with matching hash. The important part is that
 	// lockedRound is restored so we don't vote for different blocks.
-	if result.LockedBlockHash != nil {
+	// TWENTY_FIFTH_REFACTOR: Added bounds check before slice operation to prevent
+	// panic on malformed hash data during recovery from corrupted WAL.
+	if result.LockedBlockHash != nil && len(result.LockedBlockHash.Data) >= 8 {
 		log.Printf("[INFO] consensus: restored locked state from WAL - round=%d hash=%x",
 			result.LockedRound, result.LockedBlockHash.Data[:8])
+	} else if result.LockedBlockHash != nil {
+		log.Printf("[INFO] consensus: restored locked state from WAL - round=%d hash=%x (truncated)",
+			result.LockedRound, result.LockedBlockHash.Data)
 	}
-	if result.ValidBlockHash != nil {
+	if result.ValidBlockHash != nil && len(result.ValidBlockHash.Data) >= 8 {
 		log.Printf("[INFO] consensus: restored valid state from WAL - round=%d hash=%x",
 			result.ValidRound, result.ValidBlockHash.Data[:8])
+	} else if result.ValidBlockHash != nil {
+		log.Printf("[INFO] consensus: restored valid state from WAL - round=%d hash=%x (truncated)",
+			result.ValidRound, result.ValidBlockHash.Data)
 	}
 
 	// If we have a proposal, set it
@@ -252,34 +260,29 @@ func (cs *ConsensusState) ReplayCatchup(targetHeight int64) error {
 
 // addVoteNoLock adds a vote without acquiring the lock (caller must hold lock)
 // ELEVENTH_REFACTOR: Now handles conflicting votes to preserve Byzantine evidence.
+// TWENTY_FIFTH_REFACTOR: Fixed to use HeightVoteSet.AddVoteForReplay which creates
+// VoteSets on demand. Previously used Prevotes()/Precommits() which only returned
+// existing VoteSets, causing replayed votes to be silently dropped.
 func (cs *ConsensusState) addVoteNoLock(vote *gen.Vote) {
-	// Get the appropriate vote set
-	var voteSet *VoteSet
-
-	switch vote.Type {
-	case gen.VoteTypeVoteTypePrevote:
-		voteSet = cs.votes.Prevotes(vote.Round)
-	case gen.VoteTypeVoteTypePrecommit:
-		voteSet = cs.votes.Precommits(vote.Round)
-	default:
+	// TWENTY_FIFTH_REFACTOR: Defensive nil check for cs.votes.
+	// ReplayCatchup may be called before Start() initializes cs.votes.
+	if cs.votes == nil {
+		log.Printf("[WARN] consensus: cannot add replayed vote - vote set not initialized")
 		return
 	}
 
-	if voteSet == nil {
-		// Vote set doesn't exist for this round
-		return
-	}
-
-	// ELEVENTH_REFACTOR: Handle equivocation during replay instead of ignoring.
-	// If we see conflicting votes during replay, that's Byzantine evidence.
-	// TWENTIETH_REFACTOR: Use addVoteForReplay to skip timestamp validation during WAL replay.
-	// This allows recovery after extended downtime (>10 minutes) without rejecting old votes.
-	_, err := voteSet.addVoteForReplay(vote)
+	// TWENTY_FIFTH_REFACTOR: Use AddVoteForReplay which creates VoteSets on demand
+	// and skips timestamp validation. Previously used Prevotes()/Precommits() which
+	// only returned existing VoteSets, causing votes to be lost during replay.
+	added, err := cs.votes.AddVoteForReplay(vote)
 	if err == ErrConflictingVote {
 		log.Printf("[WARN] consensus: conflicting vote detected during replay: "+
 			"height=%d round=%d validator=%d", vote.Height, vote.Round, vote.ValidatorIndex)
 	} else if err != nil {
 		log.Printf("[DEBUG] consensus: error adding vote during replay: %v", err)
+	} else if added {
+		log.Printf("[DEBUG] consensus: replayed vote added: height=%d round=%d type=%d validator=%d",
+			vote.Height, vote.Round, vote.Type, vote.ValidatorIndex)
 	}
 }
 

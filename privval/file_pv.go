@@ -141,6 +141,9 @@ func NewFilePV(keyFilePath, stateFilePath string) (*FilePV, error) {
 // GenerateFilePV generates a new file-based private validator.
 // TWENTY_SECOND_REFACTOR: Acquires an exclusive file lock to prevent multi-process double-signing.
 // Call Close() to release the lock when done.
+// TWENTY_FIFTH_REFACTOR: Fixed lock ordering race - now acquires lock BEFORE saving files.
+// Previously, lock was acquired AFTER saving, creating a race window where concurrent
+// GenerateFilePV calls could overwrite each other's files before either acquired the lock.
 func GenerateFilePV(keyFilePath, stateFilePath string) (*FilePV, error) {
 	// Generate new key pair
 	pubKey, privKey, err := ed25519.GenerateKey(nil)
@@ -155,19 +158,21 @@ func GenerateFilePV(keyFilePath, stateFilePath string) (*FilePV, error) {
 		privKey:       privKey,
 	}
 
-	// Save key
-	if err := pv.saveKey(); err != nil {
-		return nil, err
-	}
-
-	// Save initial state
-	if err := pv.saveState(); err != nil {
-		return nil, err
-	}
-
-	// TWENTY_SECOND_REFACTOR: Acquire exclusive file lock to prevent multi-process access
+	// TWENTY_FIFTH_REFACTOR: Acquire lock FIRST to prevent race with other processes.
+	// This follows the Lock-Then-Modify pattern established in the 23rd refactor.
 	if err := pv.acquireLock(); err != nil {
 		return nil, fmt.Errorf("failed to acquire lock: %w", err)
+	}
+
+	// Now safe to save files with exclusive access
+	if err := pv.saveKey(); err != nil {
+		pv.Close() // Release lock on error
+		return nil, err
+	}
+
+	if err := pv.saveState(); err != nil {
+		pv.Close() // Release lock on error
+		return nil, err
 	}
 
 	return pv, nil

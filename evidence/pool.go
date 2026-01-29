@@ -117,6 +117,13 @@ func (p *Pool) CheckVote(vote *gen.Vote, valSet *types.ValidatorSet, chainID str
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// TWENTY_FIFTH_REFACTOR: Validate vote is non-nil (defensive programming)
+	// Previously only valSet was checked, but vote.Validator access at line 128
+	// would panic if vote is nil.
+	if vote == nil {
+		return nil, errors.New("nil vote")
+	}
+
 	// TWENTY_FIRST_REFACTOR: Validate valSet is non-nil (defensive programming)
 	if valSet == nil {
 		return nil, errors.New("nil validator set")

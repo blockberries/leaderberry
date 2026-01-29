@@ -2,6 +2,7 @@ package privval
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/blockberries/leaderberry/types"
 	gen "github.com/blockberries/leaderberry/types/generated"
@@ -85,6 +86,10 @@ func (lss *LastSignState) CheckHRS(height int64, round int32, step int8) error {
 }
 
 // VoteStep returns the step value for a vote type
+// TWENTY_FIFTH_REFACTOR: Now panics on invalid vote type instead of returning 0.
+// Returning 0 (StepProposal) for invalid types could cause isSameVote() to incorrectly
+// match cached proposal signatures. Panicking is appropriate since invalid vote types
+// indicate a programming error in the consensus layer.
 func VoteStep(voteType gen.VoteType) int8 {
 	switch voteType {
 	case types.VoteTypePrevote:
@@ -92,7 +97,7 @@ func VoteStep(voteType gen.VoteType) int8 {
 	case types.VoteTypePrecommit:
 		return StepPrecommit
 	default:
-		return 0
+		panic(fmt.Sprintf("privval: invalid vote type: %v", voteType))
 	}
 }
 

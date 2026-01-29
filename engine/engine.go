@@ -237,7 +237,10 @@ func (e *Engine) IsValidator() bool {
 // This prevents deadlock when called from methods that already hold the lock
 // (e.g., GetMetrics), since Go's RWMutex is NOT reentrant.
 func (e *Engine) isValidatorLocked() bool {
-	if e.privVal == nil {
+	// TWENTY_FIFTH_REFACTOR: Added nil check for validatorSet to prevent panic
+	// if called before Start() or when validatorSet is not configured.
+	// Consistent with GetValidatorSet() which also has this check.
+	if e.privVal == nil || e.validatorSet == nil {
 		return false
 	}
 
@@ -254,6 +257,11 @@ func (e *Engine) isValidatorLocked() bool {
 func (e *Engine) GetProposer() *types.NamedValidator {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
+	// TWENTY_FIFTH_REFACTOR: Added nil check for validatorSet to prevent panic.
+	// Consistent with GetValidatorSet() which also has this check.
+	if e.validatorSet == nil {
+		return nil
+	}
 	// TWENTIETH_REFACTOR: Return a copy to prevent caller corruption of internal state.
 	// This is consistent with GetValidatorSet() which also returns a copy.
 	return types.CopyValidator(e.validatorSet.Proposer)
