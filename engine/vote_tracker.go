@@ -503,7 +503,11 @@ func (hvs *HeightVoteSet) SetPeerMaj23(peerID string, round int32, voteType gen.
 }
 
 // Height returns the height
+// EIGHTEENTH_REFACTOR: Added RLock to prevent data race with Reset().
+// Previously read hvs.height without lock, which could race with Reset() writing it.
 func (hvs *HeightVoteSet) Height() int64 {
+	hvs.mu.RLock()
+	defer hvs.mu.RUnlock()
 	return hvs.height
 }
 

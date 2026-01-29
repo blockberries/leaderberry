@@ -24,6 +24,8 @@ var (
 	ErrInvalidVoteType    = errors.New("votes have different types")
 	ErrInvalidValidator   = errors.New("votes from different validators")
 	ErrSameBlockHash      = errors.New("votes for same block are not equivocation")
+	// EIGHTEENTH_REFACTOR: Added error for vote pool full to avoid silent dropping
+	ErrVotePoolFull = errors.New("vote pool full")
 )
 
 // Evidence type constants
@@ -148,9 +150,17 @@ func (p *Pool) CheckVote(vote *gen.Vote, valSet *types.ValidatorSet, chainID str
 				Timestamp:        time.Now().UnixNano(),
 			}
 
-			// Get validator power
-			if val := valSet.GetByName(types.AccountNameString(vote.Validator)); val != nil {
-				ev.ValidatorPower = val.VotingPower
+			// Get validator power (reuse val from earlier lookup)
+			ev.ValidatorPower = val.VotingPower
+
+			// EIGHTEENTH_REFACTOR: Validate created evidence before returning.
+			// Previously returned unvalidated evidence which could be invalid if
+			// the existing vote's signature was compromised or validator key changed.
+			if chainID != "" {
+				if err := VerifyDuplicateVoteEvidence(ev, chainID, valSet); err != nil {
+					log.Printf("[ERROR] evidence: created invalid evidence for equivocation: %v", err)
+					return nil, fmt.Errorf("created invalid evidence: %w", err)
+				}
 			}
 
 			return ev, nil
@@ -163,12 +173,14 @@ func (p *Pool) CheckVote(vote *gen.Vote, valSet *types.ValidatorSet, chainID str
 	// EIGHTH_REFACTOR: Check if pruning actually succeeded before adding.
 	// If all votes are in the protection window, pruning fails and we must
 	// reject the vote to prevent unbounded memory growth.
+	// EIGHTEENTH_REFACTOR: Return ErrVotePoolFull instead of silently dropping.
+	// Previously returned nil,nil which made caller think success occurred.
 	if len(p.seenVotes) >= MaxSeenVotes {
 		p.pruneOldestVotes(MaxSeenVotes / 10) // Try to remove 10%
 		if len(p.seenVotes) >= MaxSeenVotes {
 			// Pruning didn't help - pool is full of protected votes
-			log.Printf("[WARN] evidence: vote pool full (%d votes in protection window), dropping vote", len(p.seenVotes))
-			return nil, nil // Silently drop - not an error, just can't track
+			log.Printf("[WARN] evidence: vote pool full (%d votes in protection window), cannot track vote", len(p.seenVotes))
+			return nil, ErrVotePoolFull
 		}
 	}
 
@@ -211,8 +223,20 @@ func (p *Pool) AddEvidence(ev *gen.Evidence) error {
 	return nil
 }
 
-// AddDuplicateVoteEvidence adds a DuplicateVoteEvidence to the pool
-func (p *Pool) AddDuplicateVoteEvidence(dve *gen.DuplicateVoteEvidence) error {
+// AddDuplicateVoteEvidence adds a DuplicateVoteEvidence to the pool.
+// EIGHTEENTH_REFACTOR: Now requires chainID and valSet to validate evidence before adding.
+// Previously accepted external evidence without verification.
+// If chainID is empty, validation is skipped (useful for testing).
+func (p *Pool) AddDuplicateVoteEvidence(dve *gen.DuplicateVoteEvidence, chainID string, valSet *types.ValidatorSet) error {
+	// EIGHTEENTH_REFACTOR: Validate evidence before adding to prevent invalid evidence
+	// from being stored and propagated to the network.
+	// Skip validation if chainID is empty (for testing only - production should always provide chainID).
+	if chainID != "" {
+		if err := VerifyDuplicateVoteEvidence(dve, chainID, valSet); err != nil {
+			return fmt.Errorf("invalid duplicate vote evidence: %w", err)
+		}
+	}
+
 	// Serialize the duplicate vote evidence
 	data, err := dve.MarshalCramberry()
 	if err != nil {

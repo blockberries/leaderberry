@@ -308,7 +308,8 @@ func TestEvidenceIntegration(t *testing.T) {
 	}
 
 	// Add evidence
-	err = pool.AddDuplicateVoteEvidence(ev)
+	// EIGHTEENTH_REFACTOR: Now requires chainID and valSet; pass empty chainID to skip validation in test
+	err = pool.AddDuplicateVoteEvidence(ev, "", valSet)
 	if err != nil {
 		t.Fatalf("AddDuplicateVoteEvidence failed: %v", err)
 	}

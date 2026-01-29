@@ -898,7 +898,8 @@ func (cs *ConsensusState) handleVote(vote *gen.Vote) {
 			// Found equivocation! Add to evidence pool
 			log.Printf("[WARN] consensus: detected equivocation from validator %s at H=%d R=%d",
 				types.AccountNameString(vote.Validator), vote.Height, vote.Round)
-			if err := cs.evidencePool.AddDuplicateVoteEvidence(dve); err != nil {
+			// EIGHTEENTH_REFACTOR: Now pass chainID and valSet for evidence validation
+			if err := cs.evidencePool.AddDuplicateVoteEvidence(dve, cs.config.ChainID, cs.validatorSet); err != nil {
 				log.Printf("[DEBUG] consensus: failed to add evidence: %v", err)
 			}
 			// L4: Continue processing - equivocating votes still count toward quorum.

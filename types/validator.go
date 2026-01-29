@@ -63,6 +63,11 @@ func NewValidatorSet(validators []*NamedValidator) (*ValidatorSet, error) {
 
 	// Copy and validate
 	for i, v := range validators {
+		// EIGHTEENTH_REFACTOR: Check for nil validator to prevent panics in subsequent code.
+		// Go allows nil slice elements, and multiple loops in this package assume non-nil.
+		if v == nil {
+			return nil, fmt.Errorf("%w: validator %d is nil", ErrInvalidVotingPower, i)
+		}
 		// L5: Check for empty validator name to prevent panics in Hash()
 		if IsAccountNameEmpty(v.Name) {
 			return nil, fmt.Errorf("%w: validator %d", ErrEmptyValidatorName, i)

@@ -16,6 +16,8 @@ func ProposalSignBytes(chainID string, p *Proposal) []byte {
 		panic("CONSENSUS CRITICAL: nil proposal in ProposalSignBytes")
 	}
 	// Create a canonical proposal for signing (without signature)
+	// EIGHTEENTH_REFACTOR: Explicitly set Signature to zero for clarity and robustness.
+	// Previously relied on Go's zero-value which works but is brittle if schema changes.
 	canonical := &Proposal{
 		Height:    p.Height,
 		Round:     p.Round,
@@ -24,7 +26,7 @@ func ProposalSignBytes(chainID string, p *Proposal) []byte {
 		PolRound:  p.PolRound,
 		PolVotes:  p.PolVotes,
 		Proposer:  p.Proposer,
-		// Signature is nil for signing
+		Signature: Signature{Data: nil}, // Explicit zero for signing
 	}
 
 	// Prepend chain ID
