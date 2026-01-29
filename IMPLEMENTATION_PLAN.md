@@ -20,8 +20,8 @@ This document provides a comprehensive implementation plan for Leaderberry, a Te
 ```
 leaderberry/
 ├── ARCHITECTURE.md
-├── CLAUDE.md
 ├── IMPLEMENTATION_PLAN.md
+├── CODE_REVIEW.md
 ├── go.mod
 ├── go.sum
 ├── Makefile

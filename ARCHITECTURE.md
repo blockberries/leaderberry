@@ -1011,7 +1011,7 @@ type Config struct {
 ```
 leaderberry/
 ├── ARCHITECTURE.md
-├── CLAUDE.md
+├── CODE_REVIEW.md
 ├── go.mod
 ├── go.sum
 ├── Makefile

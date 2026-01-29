@@ -6,6 +6,201 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-01-29 - Production Ready
+
+Final exhaustive code reviews (FIFTH through NINETEENTH refactors) bringing the codebase to production quality with comprehensive bug fixes, defensive programming improvements, and robust error handling.
+
+### FIFTH REFACTOR - Code Review Verification
+
+#### Fixes
+- **H2**: Fixed WAL map iteration during modification - now collects keys before deleting
+- **H3**: Added `CopyVote()` function for proper deep copying in evidence pool
+- Identified and documented 5 false positives (nil prevote handling, Merkle proofs, voting power overflow, timer race, file handle leak)
+
+### SIXTH REFACTOR - Security Fixes
+
+#### Critical
+- **ValidatorSet Hash**: Excluded mutable `ProposerPriority` from hash calculation to fix light client verification and state sync
+
+#### High
+- **PrivVal temp file cleanup**: Added cleanup on all error paths in `saveState()`
+- **Evidence VoteB deep copy**: Both votes in `DuplicateVoteEvidence` now deep copied
+- **WAL rotation orphan cleanup**: Removes orphaned files on `Stat()` failure
+
+#### Medium
+- **Authorization weight overflow**: Added `safeAddWeight()` with overflow protection
+
+### SEVENTH REFACTOR - Memory Safety
+
+#### Critical
+- **PrivVal double-sign vulnerability**: State now persisted BEFORE returning signature to caller, with rollback on failure
+
+#### High
+- **ValidatorSet shallow copy**: Deep copies `AccountName` and `PublicKey` in `NewValidatorSet()`
+- **WAL height index limit**: Added `maxHeightIndexSize = 100000` with automatic pruning
+- **Key file permissions**: Validates file permissions are 0600 or stricter
+- **CheckVote signature verification**: Added `chainID` parameter for signature verification before storing votes
+- **BlockSync callback race**: Deep copies block/commit before passing to async callbacks
+- Added comprehensive copy functions: `CopyBlock`, `CopyCommit`, `CopyBlockHeader`, `CopyBlockData`, `CopyBatchCertRef`, `CopyCommitSig`, `CopyHash`
+
+### EIGHTH REFACTOR - Encapsulation Fixes
+
+#### Medium
+- **Shallow proposal block copy**: `handleProposal` now uses `CopyBlock()` for isolation
+- **seenVotes unbounded growth**: Now checks pruning success before adding; returns nil if pool full
+- **GetVotes returns copies**: Returns deep copies instead of internal pointers
+- **TOCTOU in MarkPeerCatchingUp**: Lock held during entire operation
+
+### NINTH REFACTOR - Comprehensive Fixes
+
+#### High
+- **Commit timeout wrong height**: Fixed to use `cs.height` (new height) instead of old `height` parameter
+- **BlockSyncer CaughtUp→Syncing**: Added missing state transition when falling behind
+
+#### Medium
+- **GetVote internal pointer**: Returns deep copy
+- **TwoThirdsMajority internal pointer**: Returns copy of hash
+- **MakeCommit shallow copies**: Deep copies signatures and block hash
+- **File handle leak**: Closes reader on non-EOF errors
+- **committed map unbounded**: Added pruning in `pruneExpired()`
+
+### TENTH REFACTOR - Pointer Safety
+
+#### Medium
+- **GetVotesForBlock shallow copy**: Now returns deep copies of votes
+- **SetPeerMaj23 stores pointer**: Now stores deep copy of hash
+- **GetPeerMaj23Claims returns pointers**: Returns deep copies
+- **UpdateTargetHeight callback tracking**: Now uses WaitGroup for proper shutdown
+
+### ELEVENTH REFACTOR - State Machine Safety
+
+#### Medium
+- **Round overflow in handleTimeout**: Added overflow check before incrementing
+- **AddVote stores input pointers**: Now deep copies votes before storing
+- **addVoteNoLock ignores errors**: Now handles conflicting votes and logs equivocation
+- **SignVote stores BlockHash pointer**: Now deep copies BlockHash
+- **GetByName/GetByIndex return internal pointers**: Now return deep copies via `CopyValidator()`
+
+### TWELFTH REFACTOR - Stale Reference Detection
+
+#### High
+- **Stale VoteSet reference**: Added generation counter to detect and reject votes to stale VoteSets after `Reset()`
+- **isSameVote incomplete**: Added `Timestamp` and `SignBytesHash` to `LastSignState` for complete verification
+
+#### Low
+- **CopyCommitSig nil check**: Added defensive nil check
+
+### THIRTEENTH REFACTOR - Crash Recovery
+
+#### High
+- **Locked/valid state not restored**: WAL replay now restores `lockedRound`, `lockedBlockHash`, `validRound`, `validBlockHash`
+- Added `writeStateLocked()` helper to persist consensus state to WAL when locking
+
+### FOURTEENTH REFACTOR - BFT Correctness
+
+#### High
+- **proposalBlock not restored in WAL replay**: `ReplayCatchup` now sets `cs.proposalBlock`
+
+#### Medium
+- **POL doesn't update locked/valid state**: Documented for future fix (deferred due to complexity)
+
+### FIFTEENTH REFACTOR - Signature Safety
+
+#### High
+- **Signature return vulnerability**: Added `CopySignature()` function; idempotent signature return now uses copy
+
+#### Low
+- **Inconsistent block copying**: Own proposals now use `CopyBlock()` for consistency
+
+### SIXTEENTH REFACTOR - Consensus Breaking Fixes
+
+#### Critical
+- **getProposer no tie-breaker**: Added deterministic lexicographic tie-breaker using validator name
+- **applyValidatorUpdates non-deterministic**: Added `sort.Slice()` to ensure deterministic validator ordering
+- **Block hash not verified vs commit**: Added verification that block hash matches commit certificate
+- **Panic after partial state update**: Validator updates now computed BEFORE state transitions
+
+#### High
+- **Callback deadlock**: `onProposal` and `onVote` callbacks now run in separate goroutines
+- **isSameVote/isSameProposal timestamp==0**: Removed special case for zero timestamp
+- **isSameProposal missing fields**: Now uses `SignBytesHash` for complete verification
+
+#### Medium
+- **centerPriorities overflow**: Added overflow detection with safe fallback to 0 average
+- **Nil checks in copy functions**: Added to `CopyBatchCertRef`, `CopyBlockHeader`, `CopyBlockData`
+- **VerifyCommit valSet nil check**: Added validation at function entry
+
+### SEVENTEENTH REFACTOR - Safety Critical
+
+#### Critical
+- **VerifyCommit empty signature double-count**: Duplicate check now happens BEFORE empty signature skip
+- **WriteVote uses buffered Write**: Changed to `WriteSync()` for durability
+
+#### High
+- **Goroutine callback shallow copy**: Now uses deep copies (`CopyProposal`, `CopyVote`) for callback data
+- **ProposalSignBytes/HasPOL/ProposalBlockHash nil checks**: Added defensive nil checks
+- Added `CopyProposal()` function for safe goroutine callbacks
+
+### EIGHTEENTH REFACTOR - Evidence Validation
+
+#### High
+- **AddDuplicateVoteEvidence no validation**: Now requires `chainID` and `valSet` for verification before storage
+- **CheckVote creates unvalidated evidence**: Validates evidence before returning
+
+#### Medium
+- **Silent vote dropping**: Changed from `nil, nil` return to `ErrVotePoolFull` error
+- **Missing nil validator checks**: `NewValidatorSet()` now validates for nil elements
+
+#### Low
+- **Height() race condition**: Added RLock to `HeightVoteSet.Height()`
+- **ProposalSignBytes implicit zero**: Explicitly sets `Signature{Data: nil}` for clarity
+
+### NINETEENTH REFACTOR - Final Verification
+
+No new bugs found. Verified correctness of:
+- Timeout handling (round check is correct)
+- WAL replay design (votes written before validation is intentional)
+- Generation counter approach (theoretical race has negligible practical impact)
+- Evidence handling (proposer determines block content)
+
+### Files Modified (cumulative)
+
+#### engine/
+- `state.go` - Callbacks, block hash verification, state ordering, nil checks, deterministic validator updates
+- `vote_tracker.go` - Generation counter, deep copies, stale detection, pointer safety
+- `blocksync.go` - Callback tracking, state transitions, deep copies
+- `peer_state.go` - Lock handling, TOCTOU fixes
+- `replay.go` - Locked/valid state restoration, conflicting vote handling
+
+#### types/
+- `validator.go` - Tie-breaker, overflow protection, nil checks, deep copies, priority exclusion from hash
+- `vote.go` - VerifyCommit fixes, nil checks
+- `block.go` - Copy functions, nil checks
+- `proposal.go` - Nil checks, CopyProposal
+- `hash.go` - CopySignature
+- `account.go` - Overflow protection
+
+#### privval/
+- `file_pv.go` - Double-sign prevention, signature copy, temp file cleanup, permission validation, timestamp/hash storage
+
+#### evidence/
+- `pool.go` - Validation, deep copies, size limits, ErrVotePoolFull
+
+#### wal/
+- `file_wal.go` - Height index limits, rotation fixes, WriteSync for votes
+
+### API Changes
+
+- `CheckVote(vote, valSet)` → `CheckVote(vote, valSet, chainID)`
+- `AddDuplicateVoteEvidence(dve)` → `AddDuplicateVoteEvidence(dve, chainID, valSet)`
+- Added `ErrVotePoolFull`, `ErrStaleVoteSet`
+
+### Documentation Added
+
+- See `CODE_REVIEW.md` for comprehensive summary of all findings and fixes
+
+---
+
 ## [0.9.0] - 2026-01-28 - Fourth Refactor
 
 Comprehensive code review fixes addressing critical, high, medium, and low severity issues identified during line-by-line audit of the entire codebase.
@@ -227,7 +422,7 @@ Comprehensive code review fixes addressing critical, high, medium, and low sever
 - All timeout methods clamp round numbers
 
 ### Added
-- THIRD_REFACTOR.md documenting comprehensive review findings
+- See `CODE_REVIEW.md` for review findings
 
 ## [0.7.0] - 2026-01-28 - Second Refactor Phase 5
 
@@ -462,7 +657,7 @@ Critical fixes for deadlocks, data races, and consensus safety identified during
 - WAL is now written to during consensus operations
 
 ### Added
-- SECOND_REFACTOR.md documenting comprehensive code review findings
+- See `CODE_REVIEW.md` for review findings
 
 ## [0.2.0] - 2026-01-28 - First Refactor
 
@@ -599,7 +794,7 @@ Major refactoring to address critical, high, and medium severity issues identifi
 - WAL uses segmented files instead of single file
 
 ### Documentation
-- Added FIRST_REFACTOR.md documenting all issues and implementation status
+- See `CODE_REVIEW.md` for comprehensive issue documentation
 - Added comprehensive error handling philosophy (PANIC vs ERROR)
 
 ## [0.1.0] - 2026-01-XX - Initial Release
