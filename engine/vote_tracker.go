@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/hex"
 	"fmt"
+	"math"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -12,7 +13,14 @@ import (
 	gen "github.com/blockberries/leaderberry/types/generated"
 )
 
-// M1: Maximum allowed clock drift for vote timestamps
+// MaxTimestampDrift is the maximum allowed clock drift for vote timestamps.
+// Votes with timestamps outside the range [now - MaxTimestampDrift, now + MaxTimestampDrift]
+// are rejected as invalid. The boundaries are inclusive:
+//   - Vote at exactly (now - 10 min) is ACCEPTED
+//   - Vote at exactly (now + 10 min) is ACCEPTED
+//   - Vote at (now - 10 min - 1 ns) is REJECTED
+//   - Vote at (now + 10 min + 1 ns) is REJECTED
+// TWENTY_SECOND_REFACTOR: Documented boundary behavior for clarity.
 const MaxTimestampDrift = 10 * time.Minute
 
 // VoteSet tracks votes for a single height/round/type combination
@@ -182,6 +190,13 @@ func (vs *VoteSet) addVoteInternal(vote *gen.Vote) (bool, error) {
 	// the defensive copying done in GetVotes() and GetVote().
 	voteCopy := types.CopyVote(vote)
 	vs.votes[voteCopy.ValidatorIndex] = voteCopy
+
+	// TWENTY_SECOND_REFACTOR: Defensive overflow protection
+	// Should never happen due to MaxTotalVotingPower validation and duplicate detection,
+	// but protects against bugs in duplicate detection or validator set management.
+	if val.VotingPower > 0 && vs.sum > math.MaxInt64-val.VotingPower {
+		return false, fmt.Errorf("voting power sum would overflow (current: %d, adding: %d)", vs.sum, val.VotingPower)
+	}
 	vs.sum += val.VotingPower
 
 	// Track by block hash
@@ -192,6 +207,11 @@ func (vs *VoteSet) addVoteInternal(vote *gen.Vote) (bool, error) {
 		vs.votesByBlock[key] = bv
 	}
 	bv.votes = append(bv.votes, voteCopy)
+
+	// TWENTY_SECOND_REFACTOR: Defensive overflow protection for per-block power
+	if val.VotingPower > 0 && bv.totalPower > math.MaxInt64-val.VotingPower {
+		return false, fmt.Errorf("block voting power would overflow (current: %d, adding: %d)", bv.totalPower, val.VotingPower)
+	}
 	bv.totalPower += val.VotingPower
 
 	// Check for 2/3+ majority
@@ -287,6 +307,8 @@ func (vs *VoteSet) GetVotes() []*gen.Vote {
 
 // GetVotesForBlock returns all votes for a specific block hash.
 // TENTH_REFACTOR: Returns deep copies to prevent callers from modifying internal state.
+// TWENTY_SECOND_REFACTOR: Returns empty slice instead of nil for consistency with GetVotes().
+// This follows Go idioms and prevents nil pointer confusion for callers.
 func (vs *VoteSet) GetVotesForBlock(blockHash *types.Hash) []*gen.Vote {
 	vs.mu.RLock()
 	defer vs.mu.RUnlock()
@@ -294,7 +316,8 @@ func (vs *VoteSet) GetVotesForBlock(blockHash *types.Hash) []*gen.Vote {
 	key := blockHashKey(blockHash)
 	bv, ok := vs.votesByBlock[key]
 	if !ok {
-		return nil
+		// TWENTY_SECOND_REFACTOR: Return empty slice (not nil) for consistency
+		return []*gen.Vote{}
 	}
 
 	// TENTH_REFACTOR: Return deep copies like GetVotes() does.

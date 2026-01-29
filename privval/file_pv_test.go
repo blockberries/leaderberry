@@ -16,7 +16,9 @@ func TestGenerateFilePV(t *testing.T) {
 	pv, err := GenerateFilePV(keyPath, statePath)
 	if err != nil {
 		t.Fatalf("failed to generate FilePV: %v", err)
+	defer pv.Close()
 	}
+	defer pv.Close()
 
 	// Check that public key is valid
 	pubKey := pv.GetPubKey()
@@ -44,11 +46,18 @@ func TestNewFilePV(t *testing.T) {
 
 	pubKey1 := pv1.GetPubKey()
 
+	// TWENTY_SECOND_REFACTOR: Close pv1 to release file lock before loading pv2
+	// File locking prevents multiple instances from using the same validator
+	if err := pv1.Close(); err != nil {
+		t.Fatalf("failed to close pv1: %v", err)
+	}
+
 	// Second call should load existing keys
 	pv2, err := NewFilePV(keyPath, statePath)
 	if err != nil {
 		t.Fatalf("failed to load FilePV: %v", err)
 	}
+	defer pv2.Close()
 
 	pubKey2 := pv2.GetPubKey()
 
@@ -66,7 +75,9 @@ func TestFilePVSignVote(t *testing.T) {
 	pv, err := GenerateFilePV(keyPath, statePath)
 	if err != nil {
 		t.Fatalf("failed to generate FilePV: %v", err)
+	defer pv.Close()
 	}
+	defer pv.Close()
 
 	blockHash := types.HashBytes([]byte("test-block"))
 	vote := &gen.Vote{
@@ -99,6 +110,7 @@ func TestFilePVDoubleSignPrevention(t *testing.T) {
 	pv, err := GenerateFilePV(keyPath, statePath)
 	if err != nil {
 		t.Fatalf("failed to generate FilePV: %v", err)
+	defer pv.Close()
 	}
 
 	blockHash1 := types.HashBytes([]byte("block1"))
@@ -144,6 +156,7 @@ func TestFilePVIdempotentSign(t *testing.T) {
 	pv, err := GenerateFilePV(keyPath, statePath)
 	if err != nil {
 		t.Fatalf("failed to generate FilePV: %v", err)
+	defer pv.Close()
 	}
 
 	blockHash := types.HashBytes([]byte("block"))
@@ -195,6 +208,7 @@ func TestFilePVSignProposal(t *testing.T) {
 	pv, err := GenerateFilePV(keyPath, statePath)
 	if err != nil {
 		t.Fatalf("failed to generate FilePV: %v", err)
+	defer pv.Close()
 	}
 
 	proposal := &gen.Proposal{
@@ -224,6 +238,7 @@ func TestFilePVHeightRegression(t *testing.T) {
 	pv, err := GenerateFilePV(keyPath, statePath)
 	if err != nil {
 		t.Fatalf("failed to generate FilePV: %v", err)
+	defer pv.Close()
 	}
 
 	blockHash := types.HashBytes([]byte("block"))
@@ -269,6 +284,7 @@ func TestFilePVRoundRegression(t *testing.T) {
 	pv, err := GenerateFilePV(keyPath, statePath)
 	if err != nil {
 		t.Fatalf("failed to generate FilePV: %v", err)
+	defer pv.Close()
 	}
 
 	blockHash := types.HashBytes([]byte("block"))
@@ -314,6 +330,7 @@ func TestFilePVStepProgression(t *testing.T) {
 	pv, err := GenerateFilePV(keyPath, statePath)
 	if err != nil {
 		t.Fatalf("failed to generate FilePV: %v", err)
+	defer pv.Close()
 	}
 
 	blockHash := types.HashBytes([]byte("block"))
@@ -359,6 +376,7 @@ func TestFilePVReset(t *testing.T) {
 	pv, err := GenerateFilePV(keyPath, statePath)
 	if err != nil {
 		t.Fatalf("failed to generate FilePV: %v", err)
+	defer pv.Close()
 	}
 
 	blockHash := types.HashBytes([]byte("block"))

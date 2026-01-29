@@ -243,7 +243,9 @@ func CopyBlock(b *Block) *Block {
 	}
 
 	// Deep copy Evidence slice ([][]byte)
-	if len(b.Evidence) > 0 {
+	// TWENTY_SECOND_REFACTOR: Preserve nil vs empty slice semantic distinction.
+	// nil means "uninitialized", empty slice means "explicitly no evidence".
+	if b.Evidence != nil {
 		blockCopy.Evidence = make([][]byte, len(b.Evidence))
 		for i, ev := range b.Evidence {
 			if len(ev) > 0 {

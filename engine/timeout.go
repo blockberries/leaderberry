@@ -186,6 +186,18 @@ func (tt *TimeoutTicker) run() {
 	}
 }
 
+// calculateDuration computes the timeout duration for a given round and step.
+// TWENTY_SECOND_REFACTOR: Documented overflow safety bounds.
+//
+// Overflow Safety:
+//   - MaxRoundForTimeout = 10000 caps the round multiplier
+//   - time.Duration is int64 nanoseconds (max ~292 years)
+//   - With default deltas (500ms), max timeout = 10000 * 500ms = 5000s ≈ 83 min
+//   - In nanoseconds: 10000 * 500,000,000 = 5,000,000,000,000 (5 trillion)
+//   - This is well below int64 max (9,223,372,036,854,775,807)
+//
+// If MaxRoundForTimeout or delta values are modified, verify:
+//   round * delta_ns < math.MaxInt64 / time.Duration(1)
 func (tt *TimeoutTicker) calculateDuration(ti TimeoutInfo) time.Duration {
 	// M4: Clamp round to prevent overflow in duration calculation
 	round := ti.Round

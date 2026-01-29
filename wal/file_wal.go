@@ -18,7 +18,9 @@ const (
 	// WAL file settings
 	walFilePerm       = 0600
 	walDirPerm        = 0700
-	maxMsgSize        = 10 * 1024 * 1024 // 10MB max message size
+	// TWENTY_SECOND_REFACTOR: maxMsgSize is the exclusive upper bound for message size.
+	// Messages with size >= maxMsgSize are rejected as corrupted.
+	maxMsgSize        = 10 * 1024 * 1024 // 10MB max message size (exclusive)
 	defaultBufSize    = 64 * 1024        // 64KB buffer
 	defaultMaxSegSize = 64 * 1024 * 1024 // 64MB default segment size
 
@@ -703,8 +705,10 @@ func (d *decoder) Decode() (*Message, error) {
 	}
 
 	length := binary.BigEndian.Uint32(d.buf[:4])
-	if length > maxMsgSize {
-		return nil, ErrWALCorrupted
+	// TWENTY_SECOND_REFACTOR: Use >= to make maxMsgSize an exclusive limit (standard practice).
+	// This ensures messages of exactly maxMsgSize (10MB) are rejected, not just those above it.
+	if length >= maxMsgSize {
+		return nil, fmt.Errorf("%w: message size %d >= max %d", ErrWALCorrupted, length, maxMsgSize)
 	}
 
 	// L2: Get buffer from pool to reduce GC pressure

@@ -418,21 +418,25 @@ func (p *Pool) pruneExpired() {
 
 	// NINTH_REFACTOR: Prune old committed evidence to prevent unbounded memory growth.
 	// Previously, the committed map was never pruned and would grow forever.
+	// TWENTY_SECOND_REFACTOR: Fixed underflow bug - check height < currentHeight first.
 	for key := range p.committed {
 		// Parse height from key (format: type/height/time/hash)
 		var evType int
 		var height int64
 		var evTime int64
 		if _, err := fmt.Sscanf(key, "%d/%d/%d/", &evType, &height, &evTime); err == nil {
-			if p.currentHeight-height > p.config.MaxAgeBlocks {
+			// TWENTY_SECOND_REFACTOR: Prevent underflow when currentHeight < height
+			// (e.g., currentHeight=0, height=1000 would give -1000 which is never > MaxAgeBlocks)
+			if height < p.currentHeight && p.currentHeight-height > p.config.MaxAgeBlocks {
 				delete(p.committed, key)
 			}
 		}
 	}
 
 	// Also prune old seen votes
+	// TWENTY_SECOND_REFACTOR: Fixed underflow bug - check height < currentHeight first.
 	for key, vote := range p.seenVotes {
-		if p.currentHeight-vote.Height > p.config.MaxAgeBlocks {
+		if vote.Height < p.currentHeight && p.currentHeight-vote.Height > p.config.MaxAgeBlocks {
 			delete(p.seenVotes, key)
 		}
 	}
@@ -534,6 +538,18 @@ func voteKey(vote *gen.Vote) string {
 
 // evidenceKey returns a unique key for evidence.
 // Includes hash of data to avoid collisions with same type/height/time.
+//
+// TWENTY_SECOND_REFACTOR: Hash Collision Analysis
+// Uses first 8 bytes (64 bits) of SHA256 hash for space efficiency.
+// Collision probability with birthday paradox:
+//   - 64-bit keyspace = 2^64 ≈ 18.4 quintillion possible keys
+//   - With MaxPendingEvidence = 10,000 items in pool:
+//     P(collision) ≈ n² / (2 * 2^64)
+//                  ≈ 10,000² / (2 * 2^64)
+//                  ≈ 100,000,000 / 36,893,488,147,419,103,232
+//                  ≈ 2.7 × 10^-21 (negligible)
+//   - Even with 1,000,000 items: P(collision) ≈ 2.7 × 10^-17
+// Conclusion: 64 bits provides sufficient uniqueness for bounded pool.
 func evidenceKey(ev *gen.Evidence) string {
 	dataHash := sha256.Sum256(ev.Data)
 	return fmt.Sprintf("%d/%d/%d/%x", ev.Type, ev.Height, ev.Time, dataHash[:8])

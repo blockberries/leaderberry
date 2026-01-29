@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 
 	"github.com/blockberries/leaderberry/types"
 	gen "github.com/blockberries/leaderberry/types/generated"
@@ -34,6 +35,11 @@ type FilePV struct {
 
 	// Last sign state (for double-sign prevention)
 	lastSignState LastSignState
+
+	// TWENTY_SECOND_REFACTOR: File lock to prevent multi-process double-signing
+	// This lock file handle ensures only one process can use this validator at a time.
+	// The lock is held for the lifetime of the FilePV and released on Close().
+	lockFile *os.File
 }
 
 // FilePVKey represents the key file structure
@@ -58,6 +64,8 @@ type FilePVState struct {
 // LoadFilePV loads an existing file-based private validator.
 // Returns error if key or state files don't exist.
 // Use this for production to ensure no accidental key regeneration.
+// TWENTY_SECOND_REFACTOR: Acquires an exclusive file lock to prevent multi-process double-signing.
+// Call Close() to release the lock when done.
 func LoadFilePV(keyFilePath, stateFilePath string) (*FilePV, error) {
 	pv := &FilePV{
 		keyFilePath:   keyFilePath,
@@ -74,12 +82,19 @@ func LoadFilePV(keyFilePath, stateFilePath string) (*FilePV, error) {
 		return nil, fmt.Errorf("failed to load state: %w", err)
 	}
 
+	// TWENTY_SECOND_REFACTOR: Acquire exclusive file lock to prevent multi-process access
+	if err := pv.acquireLock(); err != nil {
+		return nil, fmt.Errorf("failed to acquire lock: %w", err)
+	}
+
 	return pv, nil
 }
 
 // NewFilePV creates or loads a file-based private validator.
 // If files don't exist, generates new key and state.
 // WARNING: Use LoadFilePV in production to avoid accidental key regeneration.
+// TWENTY_SECOND_REFACTOR: Acquires an exclusive file lock to prevent multi-process double-signing.
+// Call Close() to release the lock when done.
 func NewFilePV(keyFilePath, stateFilePath string) (*FilePV, error) {
 	pv := &FilePV{
 		keyFilePath:   keyFilePath,
@@ -96,10 +111,17 @@ func NewFilePV(keyFilePath, stateFilePath string) (*FilePV, error) {
 		return nil, err
 	}
 
+	// TWENTY_SECOND_REFACTOR: Acquire exclusive file lock to prevent multi-process access
+	if err := pv.acquireLock(); err != nil {
+		return nil, fmt.Errorf("failed to acquire lock: %w", err)
+	}
+
 	return pv, nil
 }
 
-// GenerateFilePV generates a new file-based private validator
+// GenerateFilePV generates a new file-based private validator.
+// TWENTY_SECOND_REFACTOR: Acquires an exclusive file lock to prevent multi-process double-signing.
+// Call Close() to release the lock when done.
 func GenerateFilePV(keyFilePath, stateFilePath string) (*FilePV, error) {
 	// Generate new key pair
 	pubKey, privKey, err := ed25519.GenerateKey(nil)
@@ -122,6 +144,11 @@ func GenerateFilePV(keyFilePath, stateFilePath string) (*FilePV, error) {
 	// Save initial state
 	if err := pv.saveState(); err != nil {
 		return nil, err
+	}
+
+	// TWENTY_SECOND_REFACTOR: Acquire exclusive file lock to prevent multi-process access
+	if err := pv.acquireLock(); err != nil {
+		return nil, fmt.Errorf("failed to acquire lock: %w", err)
 	}
 
 	return pv, nil
@@ -660,6 +687,73 @@ func (pv *FilePV) Reset() error {
 
 	pv.lastSignState = LastSignState{}
 	return pv.saveState()
+}
+
+// acquireLock acquires an exclusive lock on the state file to prevent multi-process double-signing.
+// TWENTY_SECOND_REFACTOR: This prevents multiple validator processes from using the same key
+// simultaneously, which would cause double-signing.
+//
+// Attack scenario without locking:
+//  Process A: Signs vote for block X at H=100, R=0
+//  Process A: Updates in-memory state
+//  [RACE WINDOW]
+//  Process B: Loads old state from file (before A persists)
+//  Process A: Persists state
+//  Process B: Signs vote for block Y at H=100, R=0
+//  Process B: Persists state
+//  Result: DOUBLE SIGN at same H/R/S → Byzantine fault → validator slashing
+func (pv *FilePV) acquireLock() error {
+	// Create lock file path (state file + .lock suffix)
+	lockPath := pv.stateFilePath + ".lock"
+
+	// Ensure directory exists
+	dir := filepath.Dir(lockPath)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("failed to create lock directory: %w", err)
+	}
+
+	// Open or create lock file
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to open lock file: %w", err)
+	}
+
+	// Try to acquire exclusive lock (non-blocking)
+	// LOCK_EX = exclusive lock, LOCK_NB = non-blocking
+	err = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if err != nil {
+		lockFile.Close()
+		return fmt.Errorf("failed to acquire exclusive lock (another process may be using this validator): %w", err)
+	}
+
+	// Store lock file handle for later release
+	pv.lockFile = lockFile
+
+	return nil
+}
+
+// Close releases the file lock and closes the FilePV.
+// TWENTY_SECOND_REFACTOR: MUST be called when done using the validator to release
+// the lock and allow other processes to use it.
+func (pv *FilePV) Close() error {
+	pv.mu.Lock()
+	defer pv.mu.Unlock()
+
+	if pv.lockFile == nil {
+		return nil // Already closed or never locked
+	}
+
+	// Release the lock
+	// LOCK_UN = unlock
+	// Note: We ignore errors here because closing the file descriptor
+	// will also release the lock (flock locks are FD-based)
+	_ = syscall.Flock(int(pv.lockFile.Fd()), syscall.LOCK_UN)
+
+	// Close the lock file
+	err := pv.lockFile.Close()
+	pv.lockFile = nil
+
+	return err
 }
 
 // Ensure FilePV implements PrivValidator

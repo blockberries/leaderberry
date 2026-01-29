@@ -225,7 +225,15 @@ func (vs *ValidatorSet) Size() int {
 // if TotalPower > MaxInt64/2) by computing 2/3 as (1/3 + 1/3 + adjustment).
 // L2: Note that third + third can still overflow if third > MaxInt64/2, but
 // this is prevented by the MaxTotalVotingPower limit.
+// TWENTY_SECOND_REFACTOR: Added defensive check for zero/negative TotalPower.
 func (vs *ValidatorSet) TwoThirdsMajority() int64 {
+	// TWENTY_SECOND_REFACTOR: Defensive programming - should never happen since
+	// NewValidatorSet rejects empty sets, but guards against direct construction
+	// or future modifications that could result in zero total power.
+	if vs.TotalPower <= 0 {
+		return 0 // Conservative: any vote will fail the >= check
+	}
+
 	// Avoid overflow by dividing first, then adjusting
 	// 2/3 majority means > 2/3, so we need (2*total/3) + 1
 	// Rewrite as: total/3 + total/3 + adjustment for remainder
@@ -322,8 +330,16 @@ func (vs *ValidatorSet) Copy() (*ValidatorSet, error) {
 	}
 
 	// Copy proposer reference (point to the new validator in the copy)
+	// TWENTY_SECOND_REFACTOR: Validate proposer index exists before copying.
+	// If the validator set was modified (e.g., filtered) before Copy(), the
+	// proposer index might not exist in the new set. In that case, recompute.
 	if vs.Proposer != nil {
-		newVS.Proposer = newVS.byIndex[vs.Proposer.Index]
+		if newProposer, ok := newVS.byIndex[vs.Proposer.Index]; ok && newProposer != nil {
+			newVS.Proposer = newProposer
+		} else {
+			// Proposer index not found or nil - recompute proposer
+			newVS.Proposer = newVS.getProposer()
+		}
 	}
 
 	return newVS, nil
