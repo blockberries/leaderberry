@@ -224,6 +224,10 @@ func (cs *ConsensusState) ReplayCatchup(targetHeight int64) error {
 	// If we have a proposal, set it
 	if result.Proposal != nil {
 		cs.proposal = result.Proposal
+		// FOURTEENTH_REFACTOR: Also restore proposalBlock - this was missing and caused
+		// consensus to prevote/precommit nil after replay because enterPrevoteLocked
+		// and enterPrecommitLocked check proposalBlock, not proposal.
+		cs.proposalBlock = types.CopyBlock(&result.Proposal.Block)
 
 		// THIRTEENTH_REFACTOR: If proposal matches locked/valid hash, restore block pointers
 		proposalHash := types.BlockHash(&result.Proposal.Block)
