@@ -166,6 +166,8 @@ func (cs *ConsensusState) SetEvidencePool(pool *evidence.Pool) {
 // - VotingPower > 0: Add or update validator
 // - VotingPower == 0: Remove validator
 // The returned set has proposer priorities incremented by 1.
+// TENDERMINT_SPEC_FIX: New validators receive priority penalty of -1.125 * totalPower
+// to prevent them from proposing immediately and ensure fair rotation.
 func (cs *ConsensusState) applyValidatorUpdates(updates []ValidatorUpdate) (*types.ValidatorSet, error) {
 	// Build a map of current validators by name for quick lookup
 	currentVals := make(map[string]*types.NamedValidator)
@@ -174,7 +176,10 @@ func (cs *ConsensusState) applyValidatorUpdates(updates []ValidatorUpdate) (*typ
 		currentVals[name] = v
 	}
 
-	// Apply updates
+	// Track new validators for priority penalty
+	newValidatorNames := make(map[string]bool)
+
+	// Apply updates (first pass - apply all changes except new validator priority)
 	for _, update := range updates {
 		name := types.AccountNameString(update.Name)
 
@@ -193,14 +198,33 @@ func (cs *ConsensusState) applyValidatorUpdates(updates []ValidatorUpdate) (*typ
 					ProposerPriority: existing.ProposerPriority,
 				}
 			} else {
-				// Add new validator with zero priority (will be adjusted)
+				// Add new validator with temporary zero priority (will be set below)
 				currentVals[name] = &types.NamedValidator{
-					Name:             update.Name,
-					Index:            0, // Will be assigned by NewValidatorSet
-					PublicKey:        update.PublicKey,
-					VotingPower:      update.VotingPower,
-					ProposerPriority: 0,
+					Name:        update.Name,
+					Index:       0, // Will be assigned by NewValidatorSet
+					PublicKey:   update.PublicKey,
+					VotingPower: update.VotingPower,
+					// ProposerPriority set below after calculating total power
 				}
+				newValidatorNames[name] = true
+			}
+		}
+	}
+
+	// Calculate total power after all updates
+	var totalPower int64
+	for _, v := range currentVals {
+		totalPower += v.VotingPower
+	}
+
+	// TENDERMINT_SPEC_FIX: Apply -1.125 * totalPower penalty to new validators
+	// This prevents new validators from immediately becoming proposer.
+	// The 1.125 factor (9/8) ensures they wait approximately one full rotation.
+	if len(newValidatorNames) > 0 {
+		newValidatorPenalty := -int64(float64(totalPower) * 1.125)
+		for name := range newValidatorNames {
+			if v, ok := currentVals[name]; ok {
+				v.ProposerPriority = newValidatorPenalty
 			}
 		}
 	}
@@ -700,6 +724,13 @@ func (cs *ConsensusState) canUnlock(proposal *gen.Proposal) bool {
 		return false
 	}
 
+	// TENDERMINT_SPEC_FIX: POL must be from a round BEFORE the proposal's round
+	// The POL proves that in a PREVIOUS round, 2/3+ prevoted for this block.
+	// A POL from the current round or later would be invalid.
+	if proposal.PolRound >= proposal.Round {
+		return false
+	}
+
 	// Validate that the POL is actually valid (2/3+ prevotes for this block)
 	if err := cs.validatePOL(proposal); err != nil {
 		log.Printf("[DEBUG] consensus: canUnlock POL validation failed: %v", err)
@@ -735,10 +766,13 @@ func (cs *ConsensusState) enterPrevoteLocked(height int64, round int32) {
 				blockHash = &lockedHash
 			} else if cs.canUnlock(cs.proposal) {
 				// Case 2: Proposal is different BUT has valid POL from a later round
-				// We can prevote for this block (but do NOT update our lock yet -
-				// lock is only updated in enterPrecommitLocked when we see 2/3+ prevotes)
+				// TENDERMINT_SPEC_FIX: Clear the lock when accepting POL-based prevote.
+				// The POL proves >2/3 validators voted for a different block in a later round,
+				// so our lock is superseded. Lock is only re-acquired when we see 2/3+ prevotes.
 				log.Printf("[INFO] consensus: unlocking via POL from round %d (locked in round %d)",
 					cs.proposal.PolRound, cs.lockedRound)
+				cs.lockedRound = -1
+				cs.lockedBlock = nil
 				blockHash = &proposalHash
 			}
 			// Case 3: Proposal is different with no valid POL - prevote nil (blockHash stays nil)
@@ -1011,50 +1045,95 @@ func (cs *ConsensusState) handleVote(vote *gen.Vote) {
 }
 
 // handlePrevoteLocked handles a prevote (internal, caller must hold lock)
+// TENDERMINT_SPEC_FIX: Implements round skip per Tendermint specification.
+// "Any +2/3 prevotes at (H,R+x)" → jump to Prevote(H,R+x)
 func (cs *ConsensusState) handlePrevoteLocked(vote *gen.Vote) {
 	prevotes := cs.votes.Prevotes(vote.Round)
 	if prevotes == nil {
 		return
 	}
 
-	// Check for 2/3+ prevotes for any block
-	if prevotes.HasTwoThirdsMajority() {
-		// Enter precommit
-		if cs.step == RoundStepPrevote && vote.Round == cs.round {
-			cs.enterPrecommitLocked(cs.height, cs.round)
+	// TENDERMINT_SPEC_FIX: Round skip - if we see +2/3 prevotes from a FUTURE round,
+	// jump to that round to catch up with the network. This is critical for liveness
+	// after network partitions.
+	if vote.Round > cs.round {
+		if prevotes.HasTwoThirdsAny() {
+			log.Printf("[INFO] consensus: round skip from %d to %d (saw +2/3 prevotes)", cs.round, vote.Round)
+			cs.enterNewRoundLocked(cs.height, vote.Round)
+			// After entering new round, we're in Propose step. If we have +2/3 majority,
+			// we should also advance to Precommit. Check conditions again.
+			if prevotes.HasTwoThirdsMajority() {
+				cs.enterPrecommitLocked(cs.height, vote.Round)
+			} else {
+				// We have +2/3 any but no majority - enter prevote to cast our vote,
+				// then prevote wait
+				cs.enterPrevoteLocked(cs.height, vote.Round)
+			}
+			return
 		}
-	} else if prevotes.HasTwoThirdsAny() {
-		// Enter prevote wait
-		if cs.step == RoundStepPrevote && vote.Round == cs.round {
-			cs.enterPrevoteWaitLocked(cs.height, cs.round)
+	}
+
+	// Normal case: vote is for current round
+	if vote.Round == cs.round {
+		if prevotes.HasTwoThirdsMajority() {
+			// Enter precommit
+			if cs.step == RoundStepPrevote || cs.step == RoundStepPrevoteWait {
+				cs.enterPrecommitLocked(cs.height, cs.round)
+			}
+		} else if prevotes.HasTwoThirdsAny() {
+			// Enter prevote wait
+			if cs.step == RoundStepPrevote {
+				cs.enterPrevoteWaitLocked(cs.height, cs.round)
+			}
 		}
 	}
 }
 
 // handlePrecommitLocked handles a precommit (internal, caller must hold lock)
+// TENDERMINT_SPEC_FIX: Implements round skip per Tendermint specification.
+// "Any +2/3 precommits at (H,R+x)" → jump to Precommit(H,R+x)
 func (cs *ConsensusState) handlePrecommitLocked(vote *gen.Vote) {
 	precommits := cs.votes.Precommits(vote.Round)
 	if precommits == nil {
 		return
 	}
 
-	// Check for 2/3+ precommits for a block
+	// Check for 2/3+ precommits for a specific block
 	blockHash, ok := precommits.TwoThirdsMajority()
 	if ok && blockHash != nil && !types.IsHashEmpty(blockHash) {
-		// TWENTY_THIRD_REFACTOR: Update cs.round if precommits are from a future round.
-		// This fixes a panic in enterCommitLocked which searches from cs.round down to 0.
-		// If 2/3+ precommits came from a round > cs.round (e.g., node received valid
-		// precommits from peers who advanced), the search wouldn't find the commit.
-		// By updating cs.round first, enterCommitLocked will find the committing round.
+		// We have +2/3 precommits for a non-nil block - COMMIT!
+		// Update round if precommits are from a future round (TWENTY_THIRD_REFACTOR)
 		if vote.Round > cs.round {
+			log.Printf("[INFO] consensus: round skip to %d for commit (saw +2/3 precommits for block)", vote.Round)
 			cs.round = vote.Round
 		}
-		// Commit!
 		cs.enterCommitLocked(cs.height)
-	} else if precommits.HasTwoThirdsAny() {
-		// Enter precommit wait
-		if cs.step == RoundStepPrecommit && vote.Round == cs.round {
-			cs.enterPrecommitWaitLocked(cs.height, cs.round)
+		return
+	}
+
+	// TENDERMINT_SPEC_FIX: Round skip for +2/3 any precommits (without block majority)
+	// If we see +2/3 precommits from a FUTURE round but no majority for a specific block,
+	// jump to that round's PrecommitWait to catch up with the network.
+	if vote.Round > cs.round {
+		if precommits.HasTwoThirdsAny() {
+			log.Printf("[INFO] consensus: round skip from %d to %d (saw +2/3 precommits)", cs.round, vote.Round)
+			cs.enterNewRoundLocked(cs.height, vote.Round)
+			// After entering the new round, advance through states to PrecommitWait
+			// since we already have +2/3 precommits for this round
+			cs.enterPrevoteLocked(cs.height, vote.Round)
+			cs.enterPrecommitLocked(cs.height, vote.Round)
+			// Now in Precommit or PrecommitWait - the timeout will handle moving to next round
+			return
+		}
+	}
+
+	// Normal case: vote is for current round
+	if vote.Round == cs.round {
+		if precommits.HasTwoThirdsAny() {
+			// Enter precommit wait
+			if cs.step == RoundStepPrecommit {
+				cs.enterPrecommitWaitLocked(cs.height, cs.round)
+			}
 		}
 	}
 }
