@@ -1193,3 +1193,17 @@ replace (
 3. **Light Client Proofs**: Merkle proofs for block verification
 4. **State Sync**: Snapshot-based fast sync for new nodes
 5. **Pipelining**: Overlapping consensus rounds for higher throughput
+
+---
+
+## Ecosystem References
+
+Leaderberry is part of the Blockberries ecosystem. For complete integration documentation:
+
+- **[../ECOSYSTEM.md](../ECOSYSTEM.md)** - Complete ecosystem architecture and canonical interface definitions
+- **[../raspberry/ARCHITECTURE.md](../raspberry/ARCHITECTURE.md)** - Blockchain node integrating Leaderberry
+- **[../blockberry/ARCHITECTURE.md](../blockberry/ARCHITECTURE.md)** - Node framework with consensus interfaces
+- **[../looseberry/ARCHITECTURE.md](../looseberry/ARCHITECTURE.md)** - DAG mempool providing batches to Leaderberry
+- **[../glueberry/ARCHITECTURE.md](../glueberry/ARCHITECTURE.md)** - Encrypted P2P networking
+- **[../punnet-sdk/ARCHITECTURE.md](../punnet-sdk/ARCHITECTURE.md)** - Application module framework
+- **[../cramberry/ARCHITECTURE.md](../cramberry/ARCHITECTURE.md)** - Binary serialization
