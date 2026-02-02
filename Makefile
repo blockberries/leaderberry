@@ -1,7 +1,14 @@
 .PHONY: all generate build test lint clean
 
+# Cramberry code generator
 CRAMBERRY := cramberry
+
+# Schema directory contains .cram files (Cramberry schema definitions).
+# These are build inputs similar to .proto files - they define network-serializable types.
+# Location at project root is intentional, as they're not part of the Go package tree.
 SCHEMA_DIR := ./schema
+
+# Generated code output directory (do not edit generated files directly)
 GEN_DIR := ./types/generated
 
 all: generate build

@@ -73,10 +73,9 @@ leaderberry/
 │   ├── verify.go             # Evidence verification
 │   └── reactor.go            # Evidence gossip
 │
-└── tests/                     # Test suites
-    ├── engine_test.go
-    ├── state_test.go
-    ├── vote_test.go
+└── test/                      # External test applications
+    └── integration/           # Integration test suites
+        └── consensus_test.go
     ├── wal_test.go
     ├── privval_test.go
     ├── evidence_test.go
@@ -2292,13 +2291,12 @@ func (e *Engine) SetDAGMempool(mempool looseberry.DAGMempool) {
 
 ### 9.1 Unit Tests
 
-Each component should have comprehensive unit tests:
+Each component should have comprehensive unit tests (colocated with code using _test.go suffix):
 
 ```
-tests/
-├── types/
-│   ├── hash_test.go
-│   ├── signature_test.go
+types/
+├── hash_test.go
+├── signature_test.go
 │   ├── account_test.go
 │   ├── validator_test.go
 │   ├── vote_test.go

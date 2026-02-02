@@ -1140,10 +1140,9 @@ leaderberry/
 │   ├── leaderberry.cram    # Cramberry schema
 │   └── *.go                # Generated code
 │
-└── tests/
-    ├── engine_test.go
-    ├── state_test.go
-    ├── vote_test.go
+└── test/                        # External test applications
+    └── integration/             # Integration test suites
+        └── consensus_test.go
     ├── permission_test.go
     └── integration_test.go
 ```

@@ -17,15 +17,18 @@ Leaderberry implements a PBFT-derived consensus protocol with deterministic fina
 
 ```
 leaderberry/
-├── schema/           # Cramberry schema definitions (.cram)
-├── types/            # Generated + hand-written type extensions
+├── schema/           # Cramberry schema definitions (.cram files, build inputs)
+├── types/            # Public API: Core type definitions
 │   └── generated/    # Cramberry-generated code (do not edit)
-├── engine/           # Consensus state machine and vote tracking
-├── wal/              # Write-ahead log for crash recovery
-├── privval/          # Private validator with double-sign prevention
-├── evidence/         # Byzantine evidence detection
-└── tests/            # Integration tests
+├── engine/           # Public API: Consensus state machine
+├── wal/              # Public API: Write-ahead log interface
+├── privval/          # Public API: Private validator interface
+├── evidence/         # Public API: Byzantine evidence detection
+└── test/             # External test applications and integration tests
+    └── integration/
 ```
+
+All top-level packages are stable public APIs. See [CONTRIBUTING.md](CONTRIBUTING.md) for API stability guarantees and [package documentation](https://pkg.go.dev/github.com/blockberries/leaderberry) for detailed usage.
 
 ## Building
 
@@ -128,7 +131,7 @@ go test -race ./wal/...
 go test -race ./evidence/...
 
 # Run integration tests
-go test -race ./tests/integration/...
+go test -race ./test/integration/...
 ```
 
 ## Test Coverage
@@ -149,6 +152,21 @@ go test -race ./tests/integration/...
 - **Signature Verification**: Ed25519 signatures on all consensus messages
 - **Equivocation Detection**: Evidence pool tracks conflicting votes
 - **WAL Integrity**: Length-prefixed messages with sync on critical operations
+
+## Documentation
+
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Detailed architecture and design decisions
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Contribution guidelines and API stability
+- **[CODE_REVIEW.md](CODE_REVIEW.md)** - Established code patterns and conventions
+- **[Package Docs](https://pkg.go.dev/github.com/blockberries/leaderberry)** - Godoc API reference
+
+## Contributing
+
+We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for:
+- Development setup and build instructions
+- API stability guarantees and versioning policy
+- Code style and testing requirements
+- Pull request process
 
 ## License
 
