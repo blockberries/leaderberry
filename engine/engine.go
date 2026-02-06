@@ -106,6 +106,9 @@ func (e *Engine) Start(height int64, lastCommit *gen.Commit) error {
 		e.executor,
 	)
 
+	// Wire broadcast callbacks from engine to consensus state
+	e.state.SetBroadcastCallbacks(e.proposalBroadcast, e.voteBroadcast)
+
 	// Start consensus state machine
 	if err := e.state.Start(height, lastCommit); err != nil {
 		return fmt.Errorf("failed to start consensus state: %w", err)

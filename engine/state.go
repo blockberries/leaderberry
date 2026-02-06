@@ -548,6 +548,11 @@ func (cs *ConsensusState) createAndSendProposalLocked() {
 		proposalCopy := types.CopyProposal(proposal)
 		go callback(proposalCopy)
 	}
+
+	// Proposer enters prevote immediately after creating its own proposal.
+	// Without this, the proposer waits for the full propose timeout before
+	// entering prevote, which adds unnecessary latency to every block.
+	cs.enterPrevoteLocked(cs.height, cs.round)
 }
 
 // handleProposal processes a received proposal
@@ -1243,6 +1248,16 @@ func (cs *ConsensusState) signAndSendVoteLocked(voteType types.VoteType, blockHa
 	if !added {
 		// This shouldn't happen for our own fresh vote
 		panic("CONSENSUS CRITICAL: own vote was not added (duplicate?)")
+	}
+
+	// After adding own vote, immediately check for quorum advancement.
+	// This is critical for single-validator operation where no external votes arrive
+	// via handleVote to trigger the quorum check.
+	switch voteType {
+	case types.VoteTypePrevote:
+		cs.handlePrevoteLocked(vote)
+	case types.VoteTypePrecommit:
+		cs.handlePrecommitLocked(vote)
 	}
 
 	// M8: Broadcast vote to peers
